@@ -110,6 +110,7 @@ import com.starrocks.connector.ConnectorMgr;
 import com.starrocks.connector.exception.StarRocksConnectorException;
 import com.starrocks.connector.hive.events.MetastoreEventsProcessor;
 import com.starrocks.connector.iceberg.IcebergRepository;
+import com.starrocks.connector.iceberg.io.AsyncManifestCacheScheduler;
 import com.starrocks.consistency.ConsistencyChecker;
 import com.starrocks.external.elasticsearch.EsRepository;
 import com.starrocks.external.starrocks.StarRocksRepository;
@@ -444,6 +445,8 @@ public class GlobalStateMgr {
     // For LakeTable
     private CompactionManager compactionManager;
 
+    private AsyncManifestCacheScheduler asyncManifestCacheScheduler;
+
     public List<Frontend> getFrontends(FrontendNodeType nodeType) {
         return nodeMgr.getFrontends(nodeType);
     }
@@ -492,6 +495,10 @@ public class GlobalStateMgr {
 
     public DynamicPartitionScheduler getDynamicPartitionScheduler() {
         return this.dynamicPartitionScheduler;
+    }
+
+    public AsyncManifestCacheScheduler getAsyncManifestCacheScheduler() {
+        return this.asyncManifestCacheScheduler;
     }
 
     public long getFeStartTime() {
@@ -588,6 +595,8 @@ public class GlobalStateMgr {
 
         this.dynamicPartitionScheduler = new DynamicPartitionScheduler("DynamicPartitionScheduler",
                 Config.dynamic_partition_check_interval_seconds * 1000L);
+
+        this.asyncManifestCacheScheduler = new AsyncManifestCacheScheduler("AsyncManifestCacheScheduler", Config.aync_iceberg_manifest_cache_interval_seconds * 1000L);
 
         setMetaDir();
 
@@ -1151,6 +1160,8 @@ public class GlobalStateMgr {
         // ES state store
         esRepository.start();
         starRocksRepository.start();
+
+        asyncManifestCacheScheduler.start();
 
         if (Config.enable_hms_events_incremental_sync) {
             metastoreEventsProcessor.start();

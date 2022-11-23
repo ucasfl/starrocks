@@ -58,6 +58,7 @@ public class IcebergTable extends Table {
     public static final String ICEBERG_RESOURCE = "resource";
     public static final String PARTITION_NULL_VALUE = "null";
 
+    public static final String ICEBERG_ASYNC_MANIFEST_CACHE_ENABLE = "async_manifest_cache_enable";
     private org.apache.iceberg.Table icbTbl; // actual iceberg table
     private boolean isCatalogTbl = false;
     private String catalog;
@@ -128,6 +129,10 @@ public class IcebergTable extends Table {
 
     public String getFileIOMaxTotalBytes() {
         return icebergProperties.get(IcebergCachingFileIO.FILEIO_CACHE_MAX_TOTAL_BYTES);
+    }
+
+    public String getIcebergAsyncManifestCacheEnable() {
+        return icebergProperties.getOrDefault(ICEBERG_ASYNC_MANIFEST_CACHE_ENABLE, "false");
     }
 
     public String getResourceName() {

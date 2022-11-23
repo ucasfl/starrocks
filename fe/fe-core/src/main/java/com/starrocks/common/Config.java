@@ -1850,4 +1850,10 @@ public class Config extends ConfigBase {
      */
     @ConfField(mutable = true)
     public static boolean enable_check_db_state = true;
+
+    @ConfField(mutable = true)
+    public static long aync_iceberg_manifest_cache_interval_seconds = 5;
+
+    @ConfField(mutable = true)
+    public static int iceberg_async_manifest_cache_refresh_threads = 128;
 }

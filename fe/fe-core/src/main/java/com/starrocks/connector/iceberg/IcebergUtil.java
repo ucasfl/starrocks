@@ -14,6 +14,7 @@ import com.starrocks.catalog.Type;
 import com.starrocks.common.DdlException;
 import com.starrocks.connector.hive.RemoteFileInputFormat;
 import com.starrocks.connector.iceberg.glue.IcebergGlueCatalog;
+import com.starrocks.server.GlobalStateMgr;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.FileFormat;
@@ -349,5 +350,17 @@ public class IcebergUtil {
 
     private static ArrayType convertToArrayType(org.apache.iceberg.types.Type icebergType) {
         return new ArrayType(convertColumnType(icebergType.asNestedType().asListType().elementType()));
+    }
+
+    public static void registerOrRemoveAsyncManifestCacheTable(long dbId, IcebergTable table) {
+        if (table.getIcebergAsyncManifestCacheEnable().equals("true")) {
+            GlobalStateMgr.getCurrentState().getAsyncManifestCacheScheduler().registerAsyncManifestCacheTable(dbId, table.getId());
+        } else {
+            GlobalStateMgr.getCurrentState().getAsyncManifestCacheScheduler().removeAsyncManifestCacheTable(dbId, table.getId());
+        }
+    }
+
+    public static boolean isAsyncManifestCacheTable(IcebergTable table) {
+        return table.getIcebergAsyncManifestCacheEnable().equals("true");
     }
 }

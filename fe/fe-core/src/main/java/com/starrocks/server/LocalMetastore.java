@@ -104,6 +104,7 @@ import com.starrocks.common.util.TimeUtils;
 import com.starrocks.common.util.Util;
 import com.starrocks.connector.ConnectorMetadata;
 import com.starrocks.connector.exception.StarRocksConnectorException;
+import com.starrocks.connector.iceberg.IcebergUtil;
 import com.starrocks.lake.LakeTable;
 import com.starrocks.lake.LakeTablet;
 import com.starrocks.lake.StorageCacheInfo;
@@ -2493,6 +2494,8 @@ public class LocalMetastore implements ConnectorMetadata {
             icebergTable.setComment(stmt.getComment());
         }
 
+        IcebergUtil.registerOrRemoveAsyncManifestCacheTable(db.getId(), icebergTable);
+
         // check database exists again, because database can be dropped when creating table
         if (!tryLock(false)) {
             throw new DdlException("Failed to acquire globalStateMgr lock. Try again");
@@ -2606,6 +2609,10 @@ public class LocalMetastore implements ConnectorMetadata {
                     }
                 } // end for partitions
                 DynamicPartitionUtil.registerOrRemoveDynamicPartitionTable(dbId, olapTable);
+            }
+            if (table.isIcebergTable()) {
+                IcebergTable icebergTable = (IcebergTable) table;
+                IcebergUtil.registerOrRemoveAsyncManifestCacheTable(db.getId(), icebergTable);
             }
         }
     }
