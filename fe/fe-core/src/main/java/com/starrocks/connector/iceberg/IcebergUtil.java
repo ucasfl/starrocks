@@ -356,6 +356,8 @@ public class IcebergUtil {
         if (table.getIcebergAsyncManifestCacheEnable().equals("true")) {
             GlobalStateMgr.getCurrentState().getAsyncManifestCacheScheduler().
                     registerAsyncManifestCacheTable(dbId, table.getId());
+            GlobalStateMgr.getCurrentState().getAsyncManifestCacheScheduler().
+                    executeAsyncManifestCacheWhenCreateTable(dbId, table.getId());
         } else {
             GlobalStateMgr.getCurrentState().getAsyncManifestCacheScheduler().
                     removeAsyncManifestCacheTable(dbId, table.getId());

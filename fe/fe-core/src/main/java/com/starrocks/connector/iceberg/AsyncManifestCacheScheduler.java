@@ -15,6 +15,8 @@ import org.apache.iceberg.TableScan;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -43,8 +45,14 @@ public class AsyncManifestCacheScheduler extends LeaderDaemon {
         asyncManifestCacheTableInfo.remove(new Pair<>(dbId, tableId));
     }
 
-    private void executeAsyncManifestCache() {
-        Iterator<Pair<Long, Long>> iterator = asyncManifestCacheTableInfo.iterator();
+    public void executeAsyncManifestCacheWhenCreateTable(Long dbId, Long tableId) {
+        ArrayList<Pair<Long, Long>> tempTableInfo = new ArrayList();
+        tempTableInfo.add(new Pair<>(dbId, tableId));
+        executeAsyncManifestCache(tempTableInfo);
+    }
+
+    private void executeAsyncManifestCache(Collection<Pair<Long, Long>> asynTableInfos) {
+        Iterator<Pair<Long, Long>> iterator = asynTableInfos.iterator();
 
         while (iterator.hasNext()) {
             Pair<Long, Long> tableInfo = iterator.next();
@@ -94,6 +102,8 @@ public class AsyncManifestCacheScheduler extends LeaderDaemon {
             }
         }
         initialize = true;
+        /// Execute once async fetch when FE start
+        executeAsyncManifestCache(asyncManifestCacheTableInfo);
     }
 
     @Override
@@ -102,6 +112,6 @@ public class AsyncManifestCacheScheduler extends LeaderDaemon {
             initAsyncManifestCacheTable();
         }
         setInterval(Config.aync_iceberg_manifest_cache_interval_seconds * 1000L);
-        executeAsyncManifestCache();
+        executeAsyncManifestCache(asyncManifestCacheTableInfo);
     }
 }
