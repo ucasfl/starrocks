@@ -1,4 +1,6 @@
-package com.starrocks.connector.iceberg.io;
+// This file is licensed under the Elastic License 2.0. Copyright 2021-present, StarRocks Inc.
+
+package com.starrocks.connector.iceberg;
 
 import com.google.common.collect.Sets;
 import com.starrocks.catalog.Database;
@@ -8,7 +10,6 @@ import com.starrocks.common.Config;
 import com.starrocks.common.Pair;
 import com.starrocks.common.ThreadPoolManager;
 import com.starrocks.common.util.LeaderDaemon;
-import com.starrocks.connector.iceberg.IcebergUtil;
 import com.starrocks.server.GlobalStateMgr;
 import org.apache.iceberg.TableScan;
 import org.apache.logging.log4j.LogManager;
@@ -21,7 +22,8 @@ import java.util.concurrent.ExecutorService;
 public class AsyncManifestCacheScheduler extends LeaderDaemon {
     private static final Logger LOG = LogManager.getLogger(AsyncManifestCacheScheduler.class);
 
-    private final ExecutorService icebergManifestCacheRefreshExecutor = ThreadPoolManager.newDaemonFixedThreadPool(Config.iceberg_async_manifest_cache_refresh_threads, Integer.MAX_VALUE, "iceberg_async_manifest_refresh_pool", true);
+    private final ExecutorService icebergManifestCacheRefreshExecutor = ThreadPoolManager.newDaemonFixedThreadPool(
+            Config.iceberg_async_manifest_cache_refresh_threads, Integer.MAX_VALUE, "iceberg_async_manifest_refresh_pool", true);
 
     // (DbId, TableId) for a collection of objects marked with "async_manifest_cache.enable" = "true" on the table
     private final Set<Pair<Long, Long>> asyncManifestCacheTableInfo = Sets.newConcurrentHashSet();

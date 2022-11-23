@@ -109,8 +109,8 @@ import com.starrocks.connector.ConnectorMetadata;
 import com.starrocks.connector.ConnectorMgr;
 import com.starrocks.connector.exception.StarRocksConnectorException;
 import com.starrocks.connector.hive.events.MetastoreEventsProcessor;
+import com.starrocks.connector.iceberg.AsyncManifestCacheScheduler;
 import com.starrocks.connector.iceberg.IcebergRepository;
-import com.starrocks.connector.iceberg.io.AsyncManifestCacheScheduler;
 import com.starrocks.consistency.ConsistencyChecker;
 import com.starrocks.external.elasticsearch.EsRepository;
 import com.starrocks.external.starrocks.StarRocksRepository;
@@ -596,7 +596,8 @@ public class GlobalStateMgr {
         this.dynamicPartitionScheduler = new DynamicPartitionScheduler("DynamicPartitionScheduler",
                 Config.dynamic_partition_check_interval_seconds * 1000L);
 
-        this.asyncManifestCacheScheduler = new AsyncManifestCacheScheduler("AsyncManifestCacheScheduler", Config.aync_iceberg_manifest_cache_interval_seconds * 1000L);
+        this.asyncManifestCacheScheduler = new AsyncManifestCacheScheduler("AsyncManifestCacheScheduler",
+                Config.aync_iceberg_manifest_cache_interval_seconds * 1000L);
 
         setMetaDir();
 
