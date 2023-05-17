@@ -79,6 +79,7 @@ Status OlapTableSchemaParam::init(const POlapTableSchemaParam& pschema) {
 }
 
 Status OlapTableSchemaParam::init(const TOlapTableSchemaParam& tschema) {
+    VLOG(2) << "OlapTablePartitionParam schema init:\n" << apache::thrift::ThriftDebugString(tschema);
     _db_id = tschema.db_id;
     _table_id = tschema.table_id;
     _version = tschema.version;
@@ -135,6 +136,8 @@ OlapTablePartitionParam::~OlapTablePartitionParam() = default;
 
 Status OlapTablePartitionParam::init(RuntimeState* state) {
     std::map<std::string, SlotDescriptor*> slots_map;
+    VLOG(2) << "OlapTablePartitionParam partition init:\n" << apache::thrift::ThriftDebugString(_t_param);
+
     for (auto slot_desc : _schema->tuple_desc()->slots()) {
         slots_map.emplace(slot_desc->col_name(), slot_desc);
     }
@@ -176,31 +179,35 @@ Status OlapTablePartitionParam::init(RuntimeState* state) {
         OlapTablePartition* part = _obj_pool.add(new OlapTablePartition());
         part->id = t_part.id;
         part->num_buckets = t_part.num_buckets;
+        part->index_id = t_part.index_id;
         auto num_indexes = _schema->indexes().size();
-        if (t_part.indexes.size() != num_indexes) {
-            std::stringstream ss;
-            ss << "number of partition's index is not equal with schema's"
-               << ", num_part_indexes=" << t_part.indexes.size() << ", num_schema_indexes=" << num_indexes;
-            LOG(WARNING) << ss.str();
-            return Status::InternalError(ss.str());
+        if (t_part.indexes.size() == 1 && num_indexes != 1) {
+            // std::stringstream ss;
+            // ss << "number of partition's index is not equal with schema's"
+            //    << ", num_part_indexes=" << t_part.indexes.size() << ", num_schema_indexes=" << num_indexes;
+            // LOG(WARNING) << ss.str();
+            // return Status::InternalError(ss.str());
+        } else {
+            // old policy
+            std::sort(part->indexes.begin(), part->indexes.end(),
+                      [](const OlapTableIndexTablets& lhs, const OlapTableIndexTablets& rhs) {
+                          return lhs.index_id < rhs.index_id;
+                      });
         }
         part->indexes = t_part.indexes;
-        std::sort(part->indexes.begin(), part->indexes.end(),
-                  [](const OlapTableIndexTablets& lhs, const OlapTableIndexTablets& rhs) {
-                      return lhs.index_id < rhs.index_id;
-                  });
-        // check index
-        for (int j = 0; j < num_indexes; ++j) {
-            if (part->indexes[j].index_id != _schema->indexes()[j]->index_id) {
-                std::stringstream ss;
-                ss << "partition's index is not equal with schema's"
-                   << ", part_index=" << part->indexes[j].index_id
-                   << ", schema_index=" << _schema->indexes()[j]->index_id;
-                LOG(WARNING) << ss.str();
-                return Status::InternalError(ss.str());
-            }
-        }
+        // // check index
+        // for (int j = 0; j < num_indexes; ++j) {
+        //     if (part->indexes[j].index_id != _schema->indexes()[j]->index_id) {
+        //         std::stringstream ss;
+        //         ss << "partition's index is not equal with schema's"
+        //            << ", part_index=" << part->indexes[j].index_id
+        //            << ", schema_index=" << _schema->indexes()[j]->index_id;
+        //         LOG(WARNING) << ss.str();
+        //         return Status::InternalError(ss.str());
+        //     }
+        // }
         _partitions.emplace(part->id, part);
+        VLOG(1) << "part_id=" << part->id << ", index_id=" << part->index_id;
 
         if (t_part.is_shadow_partition) {
             VLOG(1) << "add shadow partition:" << part->id;
@@ -395,89 +402,111 @@ Status OlapTablePartitionParam::add_partitions(const std::vector<TOlapTableParti
     return Status::OK();
 }
 
-Status OlapTablePartitionParam::find_tablets(Chunk* chunk, std::vector<OlapTablePartition*>* partitions,
+Status OlapTablePartitionParam::find_tablets(Chunk* chunk,
+                                             std::vector<std::vector<OlapTablePartition*>>* index_partitions,
                                              std::vector<uint32_t>* indexes, std::vector<uint8_t>* selection,
                                              std::vector<int>* invalid_row_indexs, int64_t txn_id,
                                              std::vector<std::vector<std::string>>* partition_not_exist_row_values) {
     size_t num_rows = chunk->num_rows();
-    partitions->resize(num_rows);
 
     _compute_hashes(chunk, indexes);
 
-    if (!_partition_columns.empty()) {
-        Columns partition_columns(_partition_slot_descs.size());
-        if (!_partitions_expr_ctxs.empty()) {
-            for (size_t i = 0; i < partition_columns.size(); ++i) {
-                ASSIGN_OR_RETURN(partition_columns[i], _partitions_expr_ctxs[i]->evaluate(chunk));
-            }
-        } else {
-            for (size_t i = 0; i < partition_columns.size(); ++i) {
-                partition_columns[i] = chunk->get_column_by_slot_id(_partition_slot_descs[i]->id());
-                DCHECK(partition_columns[i] != nullptr);
-            }
-        }
+    auto shcema_indexes = _schema->indexes();
+    index_partitions->resize(shcema_indexes.size());
 
-        ChunkRow row;
-        row.columns = &partition_columns;
-        row.index = 0;
-        bool is_list_partition = _t_param.partitions[0].__isset.in_keys;
-        for (size_t i = 0; i < num_rows; ++i) {
-            if ((*selection)[i]) {
-                row.index = i;
-                auto it = is_list_partition ? _partitions_map.find(&row) : _partitions_map.upper_bound(&row);
-                if (UNLIKELY(it == _partitions_map.end())) {
-                    if (partition_not_exist_row_values) {
-                        // only support single column partition now
-                        if (partition_columns.size() != partition_not_exist_row_values->size()) {
-                            return Status::InternalError("automatic partition only support single column partition.");
-                        }
-                        for (auto& column : *row.columns) {
-                            VLOG(3) << "partition not exist chunk row:" << chunk->debug_row(i) << " partion row "
-                                    << row.debug_string();
-                            (*partition_not_exist_row_values)[0].emplace_back(column->debug_item(i));
-                        }
-                    } else {
-                        VLOG(3) << "partition not exist chunk row:" << chunk->debug_row(i) << " partion row "
-                                << row.debug_string();
-                        (*partitions)[i] = nullptr;
-                        (*selection)[i] = 0;
-                        if (invalid_row_indexs != nullptr) {
-                            invalid_row_indexs->emplace_back(i);
-                        }
-                    }
-                } else if (LIKELY(is_list_partition || _part_contains(it->second, &row))) {
-                    (*partitions)[i] = it->second;
-                    (*indexes)[i] = (*indexes)[i] % it->second->num_buckets;
-                } else {
-                    if (partition_not_exist_row_values) {
-                        if (partition_columns.size() != partition_not_exist_row_values->size()) {
-                            return Status::InternalError("automatic partition only support single column partition.");
-                        }
-                        for (auto& column : *row.columns) {
-                            VLOG(3) << "partition not exist chunk row:" << chunk->debug_row(i) << " partion row "
-                                    << row.debug_string();
-                            (*partition_not_exist_row_values)[0].emplace_back(column->debug_item(i));
-                        }
-                    } else {
-                        VLOG(3) << "partition not exist chunk row:" << chunk->debug_row(i) << " partion row "
-                                << row.debug_string() << " partition start " << it->second->start_key.debug_string()
-                                << " end " << it->second->end_key.debug_string();
-                        (*partitions)[i] = nullptr;
-                        (*selection)[i] = 0;
-                        if (invalid_row_indexs != nullptr) {
-                            invalid_row_indexs->emplace_back(i);
-                        }
-                    }
+    if (!_partition_columns.empty()) {
+        // Columns partition_columns(_partition_slot_descs.size());
+        // if (!_partitions_expr_ctxs.empty()) {
+        //     for (size_t i = 0; i < partition_columns.size(); ++i) {
+        //         ASSIGN_OR_RETURN(partition_columns[i], _partitions_expr_ctxs[i]->evaluate(chunk));
+        //     }
+        // } else {
+        //     for (size_t i = 0; i < partition_columns.size(); ++i) {
+        //         partition_columns[i] = chunk->get_column_by_slot_id(_partition_slot_descs[i]->id());
+        //         DCHECK(partition_columns[i] != nullptr);
+        //     }
+        // }
+
+        // ChunkRow row;
+        // row.columns = &partition_columns;
+        // row.index = 0;
+        // bool is_list_partition = _t_param.partitions[0].__isset.in_keys;
+
+        // for (int index_id = 0; index_id < _schema->indexes().size(); index_id++) {
+        //     auto* partitions = &((*index_partitions)[index_id]);
+        //     partitions->resize(num_rows);
+        //     for (size_t i = 0; i < num_rows; ++i) {
+        //         if ((*selection)[i]) {
+        //             row.index = i;
+        //             auto it = is_list_partition ? _partitions_map.find(&row) : _partitions_map.upper_bound(&row);
+        //             if (UNLIKELY(it == _partitions_map.end())) {
+        //                 if (partition_not_exist_row_values) {
+        //                     // only support single column partition now
+        //                     if (partition_columns.size() != partition_not_exist_row_values->size()) {
+        //                         return Status::InternalError(
+        //                                 "automatic partition only support single column partition.");
+        //                     }
+        //                     for (auto& column : *row.columns) {
+        //                         VLOG(3) << "partition not exist chunk row:" << chunk->debug_row(i) << " partion row "
+        //                                 << row.debug_string();
+        //                         (*partition_not_exist_row_values)[0].emplace_back(column->debug_item(i));
+        //                     }
+        //                 } else {
+        //                     VLOG(3) << "partition not exist chunk row:" << chunk->debug_row(i) << " partion row "
+        //                             << row.debug_string();
+        //                     (*partitions)[i] = nullptr;
+        //                     (*selection)[i] = 0;
+        //                     if (invalid_row_indexs != nullptr) {
+        //                         invalid_row_indexs->emplace_back(i);
+        //                     }
+        //                 }
+        //             } else if (LIKELY(is_list_partition || _part_contains(it->second, &row))) {
+        //                 (*partitions)[i] = it->second;
+        //                 (*indexes)[i] = (*indexes)[i] % it->second->num_buckets;
+        //             } else {
+        //                 if (partition_not_exist_row_values) {
+        //                     if (partition_columns.size() != partition_not_exist_row_values->size()) {
+        //                         return Status::InternalError(
+        //                                 "automatic partition only support single column partition.");
+        //                     }
+        //                     for (auto& column : *row.columns) {
+        //                         VLOG(3) << "partition not exist chunk row:" << chunk->debug_row(i) << " partion row "
+        //                                 << row.debug_string();
+        //                         (*partition_not_exist_row_values)[0].emplace_back(column->debug_item(i));
+        //                     }
+        //                 } else {
+        //                     VLOG(3) << "partition not exist chunk row:" << chunk->debug_row(i) << " partion row "
+        //                             << row.debug_string() << " partition start " << it->second->start_key.debug_string()
+        //                             << " end " << it->second->end_key.debug_string();
+        //                     (*partitions)[i] = nullptr;
+        //                     (*selection)[i] = 0;
+        //                     if (invalid_row_indexs != nullptr) {
+        //                         invalid_row_indexs->emplace_back(i);
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+    } else {
+        for (int index_id = 0; index_id < _schema->indexes().size(); index_id++) {
+            auto& index = _schema->indexes()[index_id];
+            auto* partitions = &((*index_partitions)[index_id]);
+            partitions->resize(num_rows);
+            OlapTablePartition* partition = _partitions_map.begin()->second;
+            // TODO: add an index.
+            for (auto& [part_id, part] : _partitions) {
+                if (part->index_id == index->index_id) {
+                    partition = part;
+                    break;
                 }
             }
-        }
-    } else {
-        OlapTablePartition* partition = _partitions_map.begin()->second;
-        int64_t num_bucket = partition->num_buckets;
-        for (size_t i = 0; i < num_rows; ++i) {
-            if ((*selection)[i]) {
-                (*partitions)[i] = partition;
-                (*indexes)[i] = (*indexes)[i] % num_bucket;
+            int64_t num_bucket = partition->num_buckets;
+            for (size_t i = 0; i < num_rows; ++i) {
+                if ((*selection)[i]) {
+                    (*partitions)[i] = partition;
+                    (*indexes)[i] = (*indexes)[i] % num_bucket;
+                }
             }
         }
     }

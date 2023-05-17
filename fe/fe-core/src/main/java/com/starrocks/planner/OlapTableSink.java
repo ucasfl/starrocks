@@ -87,10 +87,10 @@ import com.starrocks.thrift.TOlapTablePartition;
 import com.starrocks.thrift.TOlapTablePartitionParam;
 import com.starrocks.thrift.TOlapTableSchemaParam;
 import com.starrocks.thrift.TOlapTableSink;
+import com.starrocks.thrift.TPartialUpdateMode;
 import com.starrocks.thrift.TTabletLocation;
 import com.starrocks.thrift.TUniqueId;
 import com.starrocks.thrift.TWriteQuorumType;
-import com.starrocks.thrift.TPartialUpdateMode;
 import com.starrocks.transaction.TransactionState;
 import com.starrocks.warehouse.Warehouse;
 import org.apache.commons.collections4.CollectionUtils;
@@ -179,7 +179,7 @@ public class OlapTableSink extends DataSink {
         }
         tSink.setDb_id(dbId);
         tSink.setLoad_channel_timeout_s(loadChannelTimeoutS);
-        tSink.setIs_lake_table(dstTable.isCloudNativeTableOrMaterializedView() || 
+        tSink.setIs_lake_table(dstTable.isCloudNativeTableOrMaterializedView() ||
                 dstTable.isOlapExternalTable() && ((ExternalOlapTable)dstTable).isSourceTableCloudNativeTableOrMaterializedView());
         tSink.setKeys_type(dstTable.getKeysType().toThrift());
         tSink.setWrite_quorum_type(writeQuorum);
@@ -319,6 +319,51 @@ public class OlapTableSink extends DataSink {
         partitionParam.setEnable_automatic_partition(enableAutomaticPartition);
 
         PartitionType partType = table.getPartitionInfo().getType();
+        for (Map.Entry<Long, MaterializedIndexMeta> pair : table.getIndexIdToMeta().entrySet()) {
+            MaterializedIndexMeta indexMeta = pair.getValue();
+            OlapTable targetTable = null;
+            if (indexMeta.getTargetDBId() != 0 && indexMeta.getTargetTableId() != 0) {
+                Database targetDb = GlobalStateMgr.getCurrentState().getDb(indexMeta.getTargetDBId());
+                targetTable = (OlapTable) targetDb.getTable(indexMeta.getTargetTableId());
+            }
+            DistributionInfo selectedDistInfo = null;
+            for (Long partitionId : partitionIds) {
+                Partition partition = table.getPartition(partitionId);
+                MaterializedIndex index = partition.getIndex(indexMeta.getIndexId());
+                if (index.getTargetPartitionId() != 0) {
+                    partition = targetTable.getPartition(index.getTargetPartitionId());
+                }
+                buildPartitionIndex(partType, table, partition, index, partitionParam, selectedDistInfo);
+            }
+        }
+        //
+        //        for (MaterializedIndex index : partition.getMaterializedIndices(IndexExtState.ALL)) {
+        //
+        //            for (Long partitionId : partitionIds) {
+        //                Partition partition = table.getPartition(partitionId);
+        //
+        //            }
+        //        }
+        //        DistributionInfo selectedDistInfo = null;
+        //        for (Long partitionId : partitionIds) {
+        //            Partition partition = table.getPartition(partitionId);
+        //            for (MaterializedIndex index : partition.getMaterializedIndices(IndexExtState.ALL)) {
+        //                if (index.getTargetPartitionId() != 0) {
+        //                }
+        //                buildPartitionIndex(partType, table, partition, index, partitionParam, selectedDistInfo);
+        //            }
+        //        }
+        return partitionParam;
+    }
+
+    private void buildPartitionIndex(PartitionType partType, OlapTable table,
+                                     Partition partition,
+                                     MaterializedIndex index,
+                                     TOlapTablePartitionParam partitionParam,
+                                     DistributionInfo selectedDistInfo) throws UserException {
+        TOlapTablePartition tPartition = new TOlapTablePartition();
+        tPartition.setId(partition.getId());
+        tPartition.setIndex_id(index.getId());
         switch (partType) {
             case RANGE:
             case EXPR_RANGE:
@@ -327,16 +372,12 @@ public class OlapTableSink extends DataSink {
                 for (Column partCol : rangePartitionInfo.getPartitionColumns()) {
                     partitionParam.addToPartition_columns(partCol.getName());
                 }
-                DistributionInfo selectedDistInfo = null;
-                for (Long partitionId : partitionIds) {
-                    Partition partition = table.getPartition(partitionId);
-                    TOlapTablePartition tPartition = new TOlapTablePartition();
-                    tPartition.setId(partition.getId());
-                    setRangeKeys(rangePartitionInfo, partition, tPartition);
-                    setIndexAndBucketNums(partition, tPartition);
-                    partitionParam.addToPartitions(tPartition);
-                    selectedDistInfo = setDistributedColumns(partitionParam, selectedDistInfo, partition, table);
-                }
+
+                setRangeKeys(rangePartitionInfo, partition, tPartition);
+                setIndexAndBucketNums(partition, index, tPartition);
+                partitionParam.addToPartitions(tPartition);
+                selectedDistInfo = setDistributedColumns(partitionParam, selectedDistInfo, partition, table);
+
                 if (rangePartitionInfo instanceof ExpressionRangePartitionInfo) {
                     ExpressionRangePartitionInfo exprPartitionInfo = (ExpressionRangePartitionInfo) rangePartitionInfo;
                     partitionParam.setPartition_exprs(Expr.treesToThrift(exprPartitionInfo.getPartitionExprs()));
@@ -346,40 +387,33 @@ public class OlapTableSink extends DataSink {
                 }
                 break;
             }
-            case LIST:
+            case LIST: {
                 ListPartitionInfo listPartitionInfo = (ListPartitionInfo) table.getPartitionInfo();
                 for (Column partCol : listPartitionInfo.getPartitionColumns()) {
                     partitionParam.addToPartition_columns(partCol.getName());
                 }
-                DistributionInfo selectedDistInfo = null;
-                for (Long partitionId : partitionIds) {
-                    Partition partition = table.getPartition(partitionId);
-                    TOlapTablePartition tPartition = new TOlapTablePartition();
-                    tPartition.setId(partition.getId());
-                    setListPartitionValues(listPartitionInfo, partition, tPartition);
-                    setIndexAndBucketNums(partition, tPartition);
-                    partitionParam.addToPartitions(tPartition);
-                    selectedDistInfo = setDistributedColumns(partitionParam, selectedDistInfo, partition, table);
-                }
+
+                setListPartitionValues(listPartitionInfo, partition, tPartition);
+                setIndexAndBucketNums(partition, index, tPartition);
+                partitionParam.addToPartitions(tPartition);
+                selectedDistInfo = setDistributedColumns(partitionParam, selectedDistInfo, partition, table);
                 break;
+            }
             case UNPARTITIONED: {
                 // there is no partition columns for single partition
                 Preconditions.checkArgument(table.getPartitions().size() == 1,
                         "Number of table partitions is not 1 for unpartitioned table, partitionNum="
                                 + table.getPartitions().size());
-                Partition partition = null;
-                if (partitionIds != null) {
-                    Preconditions.checkState(partitionIds.size() == 1,
-                            "invalid partitionIds size:{}", partitionIds.size());
-                    partition = table.getPartition(partitionIds.get(0));
-                } else {
-                    partition = table.getPartitions().iterator().next();
-                }
+                //                if (partitionIds != null) {
+                //                    Preconditions.checkState(partitionIds.size() == 1,
+                //                            "invalid partitionIds size:{}", partitionIds.size());
+                //                    partition = table.getPartition(partitionIds.get(0));
+                //                } else {
+                //                    partition = table.getPartitions().iterator().next();
+                //                }
 
-                TOlapTablePartition tPartition = new TOlapTablePartition();
-                tPartition.setId(partition.getId());
                 // No lowerBound and upperBound for this range
-                setIndexAndBucketNums(partition, tPartition);
+                setIndexAndBucketNums(partition, index, tPartition);
                 partitionParam.addToPartitions(tPartition);
                 partitionParam.setDistributed_columns(
                         getDistColumns(partition.getDistributionInfo(), table));
@@ -389,7 +423,6 @@ public class OlapTableSink extends DataSink {
                 throw new UserException("unsupported partition for OlapTable, partition=" + partType);
             }
         }
-        return partitionParam;
     }
 
     private List<TExprNode> literalExprsToTExprNodes(List<LiteralExpr> values) {
@@ -453,6 +486,14 @@ public class OlapTableSink extends DataSink {
             tPartition.setNum_buckets(index.getTablets().size());
         }
     }
+
+    private void setIndexAndBucketNums(Partition partition, MaterializedIndex index,
+                                       TOlapTablePartition tPartition) {
+        tPartition.addToIndexes(new TOlapTableIndexTablets(index.getId(), Lists.newArrayList(
+                index.getTablets().stream().map(Tablet::getId).collect(Collectors.toList()))));
+        tPartition.setNum_buckets(index.getTablets().size());
+    }
+
 
     private DistributionInfo setDistributedColumns(TOlapTablePartitionParam partitionParam,
                                                    DistributionInfo selectedDistInfo,

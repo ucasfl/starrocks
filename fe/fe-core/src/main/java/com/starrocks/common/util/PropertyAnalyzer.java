@@ -152,6 +152,7 @@ public class PropertyAnalyzer {
     public static final String PROPERTIES_FORCE_EXTERNAL_TABLE_QUERY_REWRITE = "force_external_table_query_rewrite";
 
     public static final String PROPERTIES_MATERIALIZED_VIEW_SESSION_PREFIX = "session.";
+    public static final String PROPERTIES_MATERIALIZED_VIEW_POPULATE = "enable_populate";
 
     public static final String PROPERTIES_STORAGE_VOLUME = "storage_volume";
 

@@ -263,7 +263,7 @@ public class TransactionState implements Writable {
     // this map should be set when load execution begin, so that when the txn commit, it will know
     // which tables and rollups it loaded.
     // tbl id -> (index ids)
-    private final Map<Long, Set<Long>> loadedTblIndexes = Maps.newHashMap();
+    private final Map<Long, List<MaterializedIndex>> loadedTblIndexes = Maps.newHashMap();
 
     private String errorLogUrl = null;
 
@@ -619,10 +619,30 @@ public class TransactionState implements Writable {
      * No other thread will access this state. So no need to lock
      */
     public void addTableIndexes(OlapTable table) {
-        Set<Long> indexIds = loadedTblIndexes.computeIfAbsent(table.getId(), k -> Sets.newHashSet());
-        // always equal the index ids
-        indexIds.clear();
-        indexIds.addAll(table.getIndexIdToMeta().keySet());
+        Map<Long, List<MaterializedIndex>> tableIdToIndexes = Maps.newHashMap();
+        Long tableId = table.getId();
+
+        for (Partition partition : table.getPartitions()) {
+            for (MaterializedIndex index : partition.getMaterializedIndices(MaterializedIndex.IndexExtState.ALL)) {
+                if (index.getTargetTableId() == 0) {
+                    tableIdToIndexes.computeIfAbsent(tableId, x -> Lists.newArrayList())
+                            .add(index);
+                } else {
+                    tableIdToIndexes.computeIfAbsent(index.getTargetTableId(), x -> Lists.newArrayList())
+                            .add(index);
+                }
+            }
+        }
+        //        for (Map.Entry<Long, MaterializedIndexMeta> e : table.getIndexIdToMeta().entrySet()) {
+        //            if (e.getValue().getTargetTableId() == 0) {
+        //                tableIdToIndexes.computeIfAbsent(tableId, x -> Sets.newHashSet())
+        //                        .add(e.getKey());
+        //            } else {
+        //                tableIdToIndexes.computeIfAbsent(e.getValue().getTargetTableId(), x -> Sets.newHashSet())
+        //                        .add(e.getKey());
+        //            }
+        //        }
+        loadedTblIndexes.putAll(tableIdToIndexes);
     }
 
     public List<MaterializedIndex> getPartitionLoadedTblIndexes(long tableId, Partition partition) {
@@ -631,12 +651,13 @@ public class TransactionState implements Writable {
             loadedIndex = partition.getMaterializedIndices(MaterializedIndex.IndexExtState.ALL);
         } else {
             loadedIndex = Lists.newArrayList();
-            for (long indexId : loadedTblIndexes.get(tableId)) {
-                MaterializedIndex index = partition.getIndex(indexId);
-                if (index != null) {
-                    loadedIndex.add(index);
-                }
-            }
+            loadedIndex.addAll(loadedTblIndexes.get(tableId));
+            //            for (long indexId : loadedTblIndexes.get(tableId)) {
+            //                MaterializedIndex index = partition.getIndex(indexId);
+            //                if (index != null) {
+            //                    loadedIndex.add(index);
+            //                }
+            //            }
         }
         return loadedIndex;
     }

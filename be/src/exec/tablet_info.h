@@ -161,7 +161,9 @@ struct ChunkRow {
 };
 
 struct OlapTablePartition {
+    // partition id
     int64_t id = 0;
+    int64_t index_id = 0;
     ChunkRow start_key;
     ChunkRow end_key;
     std::vector<ChunkRow> in_keys;
@@ -212,8 +214,9 @@ public:
     // `invalid_row_index` stores index that chunk[index]
     // has been filtered out for not being able to find tablet.
     // it could be any row, becauset it's just for outputing error message for user to diagnose.
-    Status find_tablets(Chunk* chunk, std::vector<OlapTablePartition*>* partitions, std::vector<uint32_t>* indexes,
-                        std::vector<uint8_t>* selection, std::vector<int>* invalid_row_indexs, int64_t txn_id,
+    Status find_tablets(Chunk* chunk, std::vector<std::vector<OlapTablePartition*>>* partitions,
+                        std::vector<uint32_t>* indexes, std::vector<uint8_t>* selection,
+                        std::vector<int>* invalid_row_indexs, int64_t txn_id,
                         std::vector<std::vector<std::string>>* partition_not_exist_row_values);
 
     const std::map<int64_t, OlapTablePartition*>& get_partitions() const { return _partitions; }

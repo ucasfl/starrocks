@@ -264,6 +264,8 @@ public:
 
     bool has_incremental_node_channel() const { return _has_incremental_node_channel; }
 
+    int64_t index_id() const { return _index_id; }
+
 private:
     friend class OlapTableSink;
     OlapTableSink* _parent;
@@ -358,7 +360,8 @@ private:
 
     Status _send_chunk_with_colocate_index(Chunk* chunk);
 
-    Status _send_chunk_by_node(Chunk* chunk, IndexChannel* channel, std::vector<uint16_t>& selection_idx);
+    Status _send_chunk_by_node(Chunk* chunk, IndexChannel* channel, std::vector<uint16_t>& selection_idx,
+                               std::vector<int64_t>& tablet_ids);
 
     Status _fill_auto_increment_id(Chunk* chunk);
 
@@ -383,8 +386,10 @@ private:
     }
 
     void for_each_index_channel(const std::function<void(NodeChannel*)>& func) {
-        for (auto& index_channel : _channels) {
-            index_channel->for_each_node_channel(func);
+        for (auto& index_channels : _channels) {
+            for (auto& index_channel : index_channels) {
+                index_channel->for_each_node_channel(func);
+            }
         }
     }
 
@@ -429,15 +434,17 @@ private:
 
     RuntimeProfile* _profile = nullptr;
 
-    std::set<int64_t> _partition_ids;
+    std::unordered_map<int64_t, int64_t> _index_id_maps;
+
+    std::vector<std::set<int64_t>> _partition_ids;
 
     // index_channel
-    std::vector<std::unique_ptr<IndexChannel>> _channels;
+    std::vector<std::vector<std::unique_ptr<IndexChannel>>> _channels;
 
     std::vector<DecimalV2Value> _max_decimalv2_val;
     std::vector<DecimalV2Value> _min_decimalv2_val;
 
-    std::vector<OlapTablePartition*> _partitions;
+    std::vector<std::vector<OlapTablePartition*>> _partitions;
     std::vector<uint32_t> _tablet_indexes;
     // one chunk selection index for partition validation and data validation
     std::vector<uint16_t> _validate_select_idx;
@@ -445,7 +452,7 @@ private:
     std::vector<uint8_t> _validate_selection;
     // one chunk selection for BE node
     std::vector<uint32_t> _node_select_idx;
-    std::vector<int64_t> _tablet_ids;
+    std::vector<std::vector<int64_t>> _tablet_ids;
     OlapTablePartitionParam* _vectorized_partition = nullptr;
     std::vector<std::vector<int64_t>> _index_tablet_ids;
     // Store the output expr comput result column
