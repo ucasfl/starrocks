@@ -203,8 +203,6 @@ struct TColumn {
 struct TOlapTableIndexTablets {
     1: required i64 index_id
     2: required list<i64> tablets
-    // for single table materialized view
-    3: optional i64 partition_id
 }
 
 // its a closed-open range
@@ -225,7 +223,6 @@ struct TOlapTablePartition {
     8: optional list<list<Exprs.TExprNode>> in_keys
     // for automatic partition
     9: optional bool is_shadow_partition = false
-    10: optional i64 index_id
 }
 
 struct TOlapTablePartitionParam {
@@ -247,7 +244,6 @@ struct TOlapTablePartitionParam {
     8: optional list<Exprs.TExpr> partition_exprs
 
     9: optional bool enable_automatic_partition
-    10: optional i64 index_id
 }
 
 struct TOlapTableIndexSchema {

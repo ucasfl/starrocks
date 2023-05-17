@@ -224,10 +224,6 @@ public class Table extends MetaObject implements Writable, GsonPostProcessable {
         return id;
     }
 
-    public List<Long> getTrxTableIds() {
-        return Lists.newArrayList(id);
-    }
-
     /**
      * Get the unique id of table in string format, since we already ensure
      * the uniqueness of id for internal table, we just convert it to string

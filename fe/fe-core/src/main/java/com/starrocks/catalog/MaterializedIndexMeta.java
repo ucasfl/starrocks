@@ -52,7 +52,6 @@ import java.io.DataOutput;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 public class MaterializedIndexMeta implements Writable, GsonPostProcessable {
 
@@ -74,16 +73,6 @@ public class MaterializedIndexMeta implements Writable, GsonPostProcessable {
     private KeysType keysType;
     @SerializedName(value = "defineStmt")
     private OriginStatement defineStmt;
-    public enum MetaIndexType {
-        PHYSICAL,
-        LOGICAL
-    }
-    @SerializedName(value = "metaIndexType")
-    private MetaIndexType metaIndexType = MetaIndexType.PHYSICAL;
-    @SerializedName(value = "targetDBId")
-    private long targetDBId;
-    @SerializedName(value = "targetTableId")
-    private long targetTableId;
 
     public MaterializedIndexMeta(long indexId, List<Column> schema, int schemaVersion, int schemaHash,
                                  short shortKeyColumnCount, TStorageType storageType, KeysType keysType,
@@ -145,11 +134,6 @@ public class MaterializedIndexMeta implements Writable, GsonPostProcessable {
         return schemaVersion;
     }
 
-    public List<Column> getNonAggregatedColumns() {
-        return schema.stream().filter(column -> !column.isAggregated())
-                .collect(Collectors.toList());
-    }
-
     public String getOriginStmt() {
         if (defineStmt == null) {
             return null;
@@ -169,6 +153,15 @@ public class MaterializedIndexMeta implements Writable, GsonPostProcessable {
                 }
             }
         }
+    }
+
+    public Column getColumnByName(String columnName) {
+        for (Column column : schema) {
+            if (column.getName().equalsIgnoreCase(columnName)) {
+                return column;
+            }
+        }
+        return null;
     }
 
     @Override
@@ -203,40 +196,7 @@ public class MaterializedIndexMeta implements Writable, GsonPostProcessable {
         if (indexMeta.keysType != this.keysType) {
             return false;
         }
-        if (indexMeta.metaIndexType != this.metaIndexType) {
-            return false;
-        }
-        if (indexMeta.targetDBId != this.targetDBId) {
-            return false;
-        }
-        if (indexMeta.targetTableId != this.targetTableId) {
-            return false;
-        }
         return true;
-    }
-
-    public long getTargetDBId() {
-        return targetDBId;
-    }
-
-    public void setTargetDBId(long targetDBId) {
-        this.targetDBId = targetDBId;
-    }
-
-    public long getTargetTableId() {
-        return targetTableId;
-    }
-
-    public void setTargetTableId(long targetTableId) {
-        this.targetTableId = targetTableId;
-    }
-
-    public MetaIndexType getMetaIndexType() {
-        return metaIndexType;
-    }
-
-    public void setMetaIndexType(MetaIndexType metaIndexType) {
-        this.metaIndexType = metaIndexType;
     }
 
     @Override

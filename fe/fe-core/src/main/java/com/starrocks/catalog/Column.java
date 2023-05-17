@@ -105,9 +105,6 @@ public class Column implements Writable {
     // Currently, analyzed define expr is only used when creating materialized views, so the define expr in RollupJob must be analyzed.
     // In other cases, such as define expr in `MaterializedIndexMeta`, it may not be analyzed after being relayed.
     private Expr defineExpr; // use to define column in materialize view
-    // For single sync table materialized view, record each base column for the output column.
-    @SerializedName(value = "baseColumnName")
-    private String baseColumnName;
     @SerializedName(value = "materializedColumnExpr")
     private Expr materializedColumnExpr;
 
@@ -187,7 +184,6 @@ public class Column implements Writable {
         this.stats = column.getStats();
         this.defineExpr = column.getDefineExpr();
         this.defaultExpr = column.defaultExpr;
-        this.baseColumnName = column.baseColumnName;
         Preconditions.checkArgument(this.type.isComplexType() ||
                 this.type.getPrimitiveType() != PrimitiveType.INVALID_TYPE);
     }
@@ -202,8 +198,6 @@ public class Column implements Writable {
 
     public String getDisplayName() {
         if (defineExpr == null) {
-            return name;
-        } else if ((defineExpr instanceof SlotRef) && name != null) {
             return name;
         } else {
             return defineExpr.toSql();
@@ -320,21 +314,6 @@ public class Column implements Writable {
 
     public boolean isMaterializedColumn() {
         return materializedColumnExpr != null;
-    }
-
-    public String getBaseColumnName() {
-        // TODO: it may not be persistent because it can be deduced from `defineExpr`.
-        // if (baseColumnName == null) {
-        //     SlotRef refCol = getRefColumn();
-        //     if (refCol != null) {
-        //         baseColumnName = refCol.getColumnName();
-        //     }
-        //  }
-        return Strings.isNullOrEmpty(baseColumnName) ? name : baseColumnName;
-    }
-
-    public void setBaseColumnName(String baseColumnName) {
-        this.baseColumnName = baseColumnName;
     }
 
     public int getOlapColumnIndexSize() {

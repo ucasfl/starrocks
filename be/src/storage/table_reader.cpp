@@ -106,17 +106,13 @@ Status TableReader::multi_get(Chunk& keys, const std::vector<std::string>& value
     }
     size_t num_rows = keys.num_rows();
     found.assign(num_rows, false);
-    std::vector<std::vector<OlapTablePartition*>> index_partitions;
+    std::vector<OlapTablePartition*> partitions;
     std::vector<uint32_t> tablet_indexes;
     std::vector<uint8_t> validate_selection;
     std::vector<uint32_t> validate_select_idx;
     validate_selection.assign(num_rows, 1);
-    RETURN_IF_ERROR(_partition_param->find_tablets(&keys, &index_partitions, &tablet_indexes, &validate_selection,
-                                                   nullptr, 0, nullptr));
-    if (index_partitions.size() != 1) {
-        return Status::InternalError("multi_get only support one index for now");
-    }
-    auto& partitions = index_partitions[0];
+    RETURN_IF_ERROR(_partition_param->find_tablets(&keys, &partitions, &tablet_indexes, &validate_selection, nullptr, 0,
+                                                   nullptr));
     // Arrange selection_idx by merging _validate_selection
     // If chunk num_rows is 6
     // _validate_selection is [1, 0, 0, 0, 1, 1]

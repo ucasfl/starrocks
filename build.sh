@@ -48,7 +48,7 @@ if [[ $OSTYPE == darwin* ]] ; then
 else
     if [[ ! -f ${STARROCKS_THIRDPARTY}/installed/include/datasketches/hll.hpp ]]; then
         echo "Thirdparty libraries need to be build ..."
-        #${STARROCKS_THIRDPARTY}/build-thirdparty.sh
+        ${STARROCKS_THIRDPARTY}/build-thirdparty.sh
     fi
     PARALLEL=$[$(nproc)/4+1]
 fi

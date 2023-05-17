@@ -34,6 +34,7 @@
 
 package com.starrocks.sql.ast;
 
+import com.google.common.base.Preconditions;
 import com.starrocks.analysis.Expr;
 import com.starrocks.catalog.AggregateType;
 import com.starrocks.catalog.Column;
@@ -126,20 +127,17 @@ public class MVColumnItem {
 
     public Column toMVColumn(OlapTable olapTable) throws DdlException {
         Column baseColumn = olapTable.getBaseColumn(name);
-        Column result;
         if (baseColumn == null) {
-            result = new Column(name, type, isKey, aggregationType, isAllowNull,
+            Preconditions.checkNotNull(defineExpr);
+            Column result = new Column(name, type, isKey, aggregationType, isAllowNull,
                     ColumnDef.DefaultValueDef.EMPTY_VALUE, "");
-            if (defineExpr != null) {
-                result.setDefineExpr(defineExpr);
-            }
+            result.setDefineExpr(defineExpr);
+            return result;
         } else {
-            result = new Column(baseColumn);
+            Column result = new Column(baseColumn);
+            result.setIsKey(isKey);
+            result.setAggregationType(aggregationType, isAggregationTypeImplicit);
+            return result;
         }
-        result.setIsKey(isKey);
-        result.setName(name);
-        result.setAggregationType(aggregationType, isAggregationTypeImplicit);
-        result.setBaseColumnName(baseColumnName);
-        return result;
     }
 }
