@@ -223,6 +223,9 @@ struct TOlapTablePartition {
     8: optional list<list<Exprs.TExprNode>> in_keys
     // for automatic partition
     9: optional bool is_shadow_partition = false
+    
+    // for logical sync materialized view
+    10: optional i64 index_id
 }
 
 struct TOlapTablePartitionParam {

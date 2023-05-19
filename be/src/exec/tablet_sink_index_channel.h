@@ -71,7 +71,8 @@ class TExpr;
 
 namespace stream_load {
 
-class OlapTableSink; // forward declaration
+class OlapTableSink;    // forward declaration
+class TabletSinkSender; // forward declaration
 
 // The counter of add_batch rpc of a single node
 struct AddBatchCounter {
@@ -263,6 +264,7 @@ public:
 
 private:
     friend class OlapTableSink;
+    friend class TabletSinkSender;
     OlapTableSink* _parent;
     int64_t _index_id;
 

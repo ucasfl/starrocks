@@ -48,7 +48,7 @@
 #include "common/tracer.h"
 #include "exec/data_sink.h"
 #include "exec/tablet_info.h"
-// #include "exec/tablet_sink_index_channel.h"
+#include "exec/tablet_sink_index_channel.h"
 #include "gen_cpp/Types_types.h"
 #include "gen_cpp/doris_internal_service.pb.h"
 #include "gen_cpp/internal_service.pb.h"
@@ -71,23 +71,37 @@ class ExprContext;
 class TExpr;
 
 namespace stream_load {
-
+// TabletSinkSender will control one index/table's send chunks.
 class TabletSinkSender {
 public:
 private:
-    // std::set<int64_t> _partition_ids;
-    // OlapTableLocationParam* _location = nullptr;
-    // // index_channel
-    // std::vector<std::unique_ptr<IndexChannel>> _channels;
-    // std::vector<OlapTablePartition*> _partitions;
-    // std::vector<uint32_t> _tablet_indexes;
-    // // one chunk selection for BE node
-    // std::vector<uint32_t> _node_select_idx;
-    // std::vector<int64_t> _tablet_ids;
-    // OlapTablePartitionParam* _vectorized_partition = nullptr;
-    // std::vector<std::vector<int64_t>> _index_tablet_ids;
-    // // Store the output expr comput result column
-    // std::unique_ptr<Chunk> _output_chunk;
+    Status _send_chunk(Chunk* chunk);
+
+    Status _send_chunk_with_colocate_index(Chunk* chunk);
+
+    Status _send_chunk_by_node(Chunk* chunk, IndexChannel* channel, std::vector<uint16_t>& selection_idx);
+
+    Status _fill_auto_increment_id(Chunk* chunk);
+
+    Status _fill_auto_increment_id_internal(Chunk* chunk, SlotDescriptor* slot, int64_t table_id);
+
+private:
+    bool _enable_replicated_storage{false};
+    std::set<int64_t> _partition_ids;
+    OlapTableLocationParam* _location = nullptr;
+    // index_channel
+    std::vector<std::unique_ptr<IndexChannel>> _channels;
+    std::vector<OlapTablePartition*> _partitions;
+    std::vector<uint32_t> _tablet_indexes;
+    // one chunk selection index for partition validation and data validation
+    std::vector<uint16_t> _validate_select_idx;
+    // one chunk selection for BE node
+    std::vector<uint32_t> _node_select_idx;
+    std::vector<int64_t> _tablet_ids;
+    OlapTablePartitionParam* _vectorized_partition = nullptr;
+    std::vector<std::vector<int64_t>> _index_tablet_ids;
+    // Store the output expr comput result column
+    std::unique_ptr<Chunk> _output_chunk;
 };
 
 } // namespace stream_load
