@@ -90,11 +90,11 @@ public:
     ~TabletSinkSender() = default;
 
 public:
-    virtual Status send_chunk(const std::vector<OlapTablePartition*>& partitions,
+    virtual Status send_chunk(std::shared_ptr<OlapTableSchemaParam> schema,
+                              const std::vector<OlapTablePartition*>& partitions,
                               const std::vector<uint32_t>& tablet_indexes,
-                              const std::vector<uint16_t>& validate_select_idx, Chunk* chunk) {
-        return _send_chunk(partitions, tablet_indexes, validate_select_idx, chunk);
-    }
+                              const std::vector<uint16_t>& validate_select_idx,
+                              std::unordered_map<int64_t, std::set<int64_t>>& index_id_partition_id, Chunk* chunk);
 
     virtual Status try_open(RuntimeState* state);
     virtual Status open_wait();
@@ -124,9 +124,6 @@ public:
     }
 
 protected:
-    Status _send_chunk(const std::vector<OlapTablePartition*>& partitions, const std::vector<uint32_t>& tablet_indexes,
-                       const std::vector<uint16_t>& validate_select_idx, Chunk* chunk);
-
     Status _send_chunk_by_node(Chunk* chunk, IndexChannel* channel, const std::vector<uint16_t>& selection_idx);
 
     void _mark_as_failed(const NodeChannel* ch) { _failed_channels.insert(ch->node_id()); }

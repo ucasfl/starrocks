@@ -230,7 +230,7 @@ private:
     // index_channel
     std::vector<std::unique_ptr<IndexChannel>> _channels;
     std::vector<OlapTablePartition*> _partitions;
-    std::set<int64_t> _partition_ids;
+    std::unordered_map<int64_t, std::set<int64_t>> _index_id_partition_ids;
     std::vector<uint32_t> _tablet_indexes;
     // Store the output expr comput result column
     std::unique_ptr<Chunk> _output_chunk;

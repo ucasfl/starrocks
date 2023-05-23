@@ -347,8 +347,7 @@ Status OlapTablePartitionParam::_create_partition_keys(const std::vector<TExprNo
     return Status::OK();
 }
 
-Status OlapTablePartitionParam::add_partitions(const std::vector<TOlapTablePartition>& partitions,
-                                               std::set<int64_t>& partition_ids) {
+Status OlapTablePartitionParam::add_partitions(const std::vector<TOlapTablePartition>& partitions) {
     for (auto& t_part : partitions) {
         if (_partitions.count(t_part.id) != 0) {
             continue;
@@ -389,7 +388,6 @@ Status OlapTablePartitionParam::add_partitions(const std::vector<TOlapTableParti
         }
         _partitions.emplace(part->id, part);
         _partitions_map.emplace(&part->end_key, part);
-        partition_ids.emplace(part->id);
         VLOG(1) << "add automatic partition:" << part->id << " start " << part->start_key.debug_string() << " end "
                 << part->end_key.debug_string();
     }
@@ -400,8 +398,7 @@ Status OlapTablePartitionParam::add_partitions(const std::vector<TOlapTableParti
 Status OlapTablePartitionParam::find_tablets(Chunk* chunk, std::vector<OlapTablePartition*>* partitions,
                                              std::vector<uint32_t>* indexes, std::vector<uint8_t>* selection,
                                              std::vector<int>* invalid_row_indexs, int64_t txn_id,
-                                             std::vector<std::vector<std::string>>* partition_not_exist_row_values,
-                                             std::set<int64_t>& partitiond_ids) {
+                                             std::vector<std::vector<std::string>>* partition_not_exist_row_values) {
     size_t num_rows = chunk->num_rows();
     partitions->resize(num_rows);
 
@@ -451,7 +448,6 @@ Status OlapTablePartitionParam::find_tablets(Chunk* chunk, std::vector<OlapTable
                 } else if (LIKELY(is_list_partition || _part_contains(it->second, &row))) {
                     (*partitions)[i] = it->second;
                     (*indexes)[i] = (*indexes)[i] % it->second->num_buckets;
-                    partitiond_ids.emplace(it->second->id);
                 } else {
                     if (partition_not_exist_row_values) {
                         if (partition_columns.size() != partition_not_exist_row_values->size()) {
@@ -478,7 +474,6 @@ Status OlapTablePartitionParam::find_tablets(Chunk* chunk, std::vector<OlapTable
     } else {
         OlapTablePartition* partition = _partitions_map.begin()->second;
         int64_t num_bucket = partition->num_buckets;
-        partitiond_ids.emplace(partition->id);
         for (size_t i = 0; i < num_rows; ++i) {
             if ((*selection)[i]) {
                 (*partitions)[i] = partition;

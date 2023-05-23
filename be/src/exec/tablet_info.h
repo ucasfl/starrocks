@@ -167,6 +167,7 @@ struct OlapTablePartition {
     std::vector<ChunkRow> in_keys;
     int64_t num_buckets = 0;
     std::vector<OlapTableIndexTablets> indexes;
+    std::vector<int> associated_partition_ids;
 };
 
 struct PartionKeyComparator {
@@ -214,12 +215,11 @@ public:
     // it could be any row, becauset it's just for outputing error message for user to diagnose.
     Status find_tablets(Chunk* chunk, std::vector<OlapTablePartition*>* partitions, std::vector<uint32_t>* indexes,
                         std::vector<uint8_t>* selection, std::vector<int>* invalid_row_indexs, int64_t txn_id,
-                        std::vector<std::vector<std::string>>* partition_not_exist_row_values,
-                        std::set<int64_t>& partition_ids);
+                        std::vector<std::vector<std::string>>* partition_not_exist_row_values);
 
     const std::map<int64_t, OlapTablePartition*>& get_partitions() const { return _partitions; }
 
-    Status add_partitions(const std::vector<TOlapTablePartition>& partitions, std::set<int64_t>& partition_ids);
+    Status add_partitions(const std::vector<TOlapTablePartition>& partitions);
 
     bool is_un_partitioned() const { return _partition_columns.empty(); }
 

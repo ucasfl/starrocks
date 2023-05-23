@@ -66,10 +66,12 @@
 
 namespace starrocks::stream_load {
 
-Status TabletSinkColocateSender::_send_chunk_with_colocate_index(const std::vector<OlapTablePartition*>& partitions,
-                                                                 const std::vector<uint32_t>& tablet_indexes,
-                                                                 const std::vector<uint16_t>& validate_select_idx,
-                                                                 Chunk* chunk) {
+Status TabletSinkColocateSender::send_chunk(std::shared_ptr<OlapTableSchemaParam> schema,
+                                            const std::vector<OlapTablePartition*>& partitions,
+                                            const std::vector<uint32_t>& tablet_indexes,
+                                            const std::vector<uint16_t>& validate_select_idx,
+                                            std::unordered_map<int64_t, std::set<int64_t>>& index_id_partition_id,
+                                            Chunk* chunk) {
     Status err_st = Status::OK();
     size_t num_rows = chunk->num_rows();
     size_t selection_size = validate_select_idx.size();

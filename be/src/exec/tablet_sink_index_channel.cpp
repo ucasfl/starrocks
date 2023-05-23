@@ -544,7 +544,7 @@ Status NodeChannel::_send_request(bool eos, bool wait_all_sender_close) {
             if (wait_all_sender_close) {
                 req->set_wait_all_sender_close(true);
             }
-            for (auto pid : _parent->_partition_ids) {
+            for (auto pid : _parent->_index_id_partition_ids[req->index_id()]) {
                 req->add_partition_ids(pid);
             }
             // eos request must be the last request

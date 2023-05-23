@@ -365,7 +365,7 @@ Status OlapTableSink::_automatic_create_partition() {
     VLOG(1) << "automatic partition rpc end response " << result;
     if (result.status.status_code == TStatusCode::OK) {
         // add new created partitions
-        RETURN_IF_ERROR(_vectorized_partition->add_partitions(result.partitions, _partition_ids));
+        RETURN_IF_ERROR(_vectorized_partition->add_partitions(result.partitions));
 
         // add new tablet locations
         _location->add_locations(result.tablets);
@@ -501,7 +501,7 @@ Status OlapTableSink::send_chunk(RuntimeState* state, Chunk* chunk) {
 
                 RETURN_IF_ERROR(_vectorized_partition->find_tablets(chunk, &_partitions, &_tablet_indexes,
                                                                     &_validate_selection, &invalid_row_indexs, _txn_id,
-                                                                    &_partition_not_exist_row_values, _partition_ids));
+                                                                    &_partition_not_exist_row_values));
 
                 if (!_partition_not_exist_row_values[0].empty()) {
                     _is_automatic_partition_running.store(true, std::memory_order_release);
@@ -522,13 +522,13 @@ Status OlapTableSink::send_chunk(RuntimeState* state, Chunk* chunk) {
                         // after the partition is created, go through the data again
                         RETURN_IF_ERROR(_vectorized_partition->find_tablets(chunk, &_partitions, &_tablet_indexes,
                                                                             &_validate_selection, &invalid_row_indexs,
-                                                                            _txn_id, nullptr, _partition_ids));
+                                                                            _txn_id, nullptr));
                     }
                 }
             } else {
                 RETURN_IF_ERROR(_vectorized_partition->find_tablets(chunk, &_partitions, &_tablet_indexes,
                                                                     &_validate_selection, &invalid_row_indexs, _txn_id,
-                                                                    nullptr, _partition_ids));
+                                                                    nullptr));
                 _has_automatic_partition = false;
             }
             // Note: must padding char column after find_tablets.
@@ -584,7 +584,8 @@ Status OlapTableSink::send_chunk(RuntimeState* state, Chunk* chunk) {
     StarRocksMetrics::instance()->load_bytes_total.increment(serialize_size);
 
     SCOPED_TIMER(_send_data_timer);
-    return _tablet_sink_sender->send_chunk(_partitions, _tablet_indexes, _validate_select_idx, chunk);
+    return _tablet_sink_sender->send_chunk(_schema, _partitions, _tablet_indexes, _validate_select_idx,
+                                           _index_id_partition_ids, chunk);
 }
 
 Status OlapTableSink::_fill_auto_increment_id(Chunk* chunk) {
