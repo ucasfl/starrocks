@@ -178,16 +178,16 @@ Status TabletSinkSender::try_close(RuntimeState* state) {
     bool intolerable_failure = false;
     if (_colocate_mv_index) {
         for_each_node_channel([this, &err_st, &intolerable_failure](NodeChannel* ch) {
-            if (!this->is_failed_channel(ch)) {
+            if (!this->_is_failed_channel(ch)) {
                 auto st = ch->try_close();
                 if (!st.ok()) {
                     LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
                                  << ", load_info=" << ch->print_load_info() << ", error_msg=" << st.get_error_msg();
                     err_st = st;
-                    this->mark_as_failed(ch);
+                    this->_mark_as_failed(ch);
                 }
             }
-            if (this->has_intolerable_failure()) {
+            if (this->_has_intolerable_failure()) {
                 intolerable_failure = true;
             }
         });
