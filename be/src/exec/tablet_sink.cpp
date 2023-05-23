@@ -313,76 +313,15 @@ Status OlapTableSink::open(RuntimeState* state) {
 }
 
 Status OlapTableSink::try_open(RuntimeState* state) {
-    // Prepare the exprs to run.
-    RETURN_IF_ERROR(Expr::open(_output_expr_ctxs, state));
-    RETURN_IF_ERROR(_vectorized_partition->open(state));
-
-    if (_colocate_mv_index) {
-        for_each_node_channel([](NodeChannel* ch) { ch->try_open(); });
-    } else {
-        for_each_index_channel([](NodeChannel* ch) { ch->try_open(); });
-    }
-
-    return Status::OK();
+    return _tablet_sink_sender->try_open(state);
 }
 
 bool OlapTableSink::is_open_done() {
-    if (!_open_done) {
-        bool open_done = true;
-        if (_colocate_mv_index) {
-            for_each_node_channel([&open_done](NodeChannel* ch) { open_done &= ch->is_open_done(); });
-        } else {
-            for_each_index_channel([&open_done](NodeChannel* ch) { open_done &= ch->is_open_done(); });
-        }
-        _open_done = open_done;
-    }
-
-    return _open_done;
+    return _tablet_sink_sender->is_open_done();
 }
 
 Status OlapTableSink::open_wait() {
-    Status err_st = Status::OK();
-    if (_colocate_mv_index) {
-        for_each_node_channel([this, &err_st](NodeChannel* ch) {
-            auto st = ch->open_wait();
-            if (!st.ok()) {
-                LOG(WARNING) << ch->name() << ", tablet open failed, " << ch->print_load_info()
-                             << ", node=" << ch->node_info()->host << ":" << ch->node_info()->brpc_port
-                             << ", errmsg=" << st.get_error_msg();
-                err_st = st.clone_and_append(string(" be:") + ch->node_info()->host);
-                this->mark_as_failed(ch);
-            }
-            // disable colocate mv index load if other BE not supported
-            if (!ch->enable_colocate_mv_index()) {
-                _colocate_mv_index = false;
-            }
-        });
-
-        if (has_intolerable_failure()) {
-            LOG(WARNING) << "Open channel failed. load_id: " << _load_id << ", error: " << err_st.to_string();
-            return err_st;
-        }
-    } else {
-        for (auto& index_channel : _channels) {
-            index_channel->for_each_node_channel([&index_channel, &err_st](NodeChannel* ch) {
-                auto st = ch->open_wait();
-                if (!st.ok()) {
-                    LOG(WARNING) << ch->name() << ", tablet open failed, " << ch->print_load_info()
-                                 << ", node=" << ch->node_info()->host << ":" << ch->node_info()->brpc_port
-                                 << ", errmsg=" << st.get_error_msg();
-                    err_st = st.clone_and_append(string(" be:") + ch->node_info()->host);
-                    index_channel->mark_as_failed(ch);
-                }
-            });
-
-            if (index_channel->has_intolerable_failure()) {
-                LOG(WARNING) << "Open channel failed. load_id: " << _load_id << ", error: " << err_st.to_string();
-                return err_st;
-            }
-        }
-    }
-
-    return Status::OK();
+    return _tablet_sink_sender->open_wait();
 }
 
 bool OlapTableSink::is_full() {
@@ -635,104 +574,6 @@ Status OlapTableSink::send_chunk(RuntimeState* state, Chunk* chunk) {
 
     SCOPED_TIMER(_send_data_timer);
     return _tablet_sink_sender->send_chunk(_partitions, _tablet_indexes, _validate_select_idx, chunk);
-}
-
-Status OlapTableSink::try_close(RuntimeState* state) {
-    Status err_st = Status::OK();
-    bool intolerable_failure = false;
-    if (_colocate_mv_index) {
-        for_each_node_channel([this, &err_st, &intolerable_failure](NodeChannel* ch) {
-            if (!this->is_failed_channel(ch)) {
-                auto st = ch->try_close();
-                if (!st.ok()) {
-                    LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
-                                 << ", load_info=" << ch->print_load_info() << ", error_msg=" << st.get_error_msg();
-                    err_st = st;
-                    this->mark_as_failed(ch);
-                }
-            }
-            if (this->has_intolerable_failure()) {
-                intolerable_failure = true;
-            }
-        });
-    } else {
-        for (auto& index_channel : _channels) {
-            if (index_channel->has_incremental_node_channel()) {
-                // close initial node channel and wait it done
-                index_channel->for_each_initial_node_channel(
-                        [&index_channel, &err_st, &intolerable_failure](NodeChannel* ch) {
-                            if (!index_channel->is_failed_channel(ch)) {
-                                auto st = ch->try_close(true);
-                                if (!st.ok()) {
-                                    LOG(WARNING) << "close initial channel failed. channel_name=" << ch->name()
-                                                 << ", load_info=" << ch->print_load_info()
-                                                 << ", error_msg=" << st.get_error_msg();
-                                    err_st = st;
-                                    index_channel->mark_as_failed(ch);
-                                }
-                            }
-                            if (index_channel->has_intolerable_failure()) {
-                                intolerable_failure = true;
-                            }
-                        });
-
-                if (intolerable_failure) {
-                    break;
-                }
-
-                bool is_initial_node_channel_close_done = true;
-                index_channel->for_each_initial_node_channel([&is_initial_node_channel_close_done](NodeChannel* ch) {
-                    is_initial_node_channel_close_done &= ch->is_close_done();
-                });
-
-                // close initial node channel not finish, can not close incremental node channel
-                if (!is_initial_node_channel_close_done) {
-                    break;
-                }
-
-                // close incremental node channel
-                index_channel->for_each_incremental_node_channel(
-                        [&index_channel, &err_st, &intolerable_failure](NodeChannel* ch) {
-                            if (!index_channel->is_failed_channel(ch)) {
-                                auto st = ch->try_close();
-                                if (!st.ok()) {
-                                    LOG(WARNING) << "close incremental channel failed. channel_name=" << ch->name()
-                                                 << ", load_info=" << ch->print_load_info()
-                                                 << ", error_msg=" << st.get_error_msg();
-                                    err_st = st;
-                                    index_channel->mark_as_failed(ch);
-                                }
-                            }
-                            if (index_channel->has_intolerable_failure()) {
-                                intolerable_failure = true;
-                            }
-                        });
-
-            } else {
-                index_channel->for_each_node_channel([&index_channel, &err_st, &intolerable_failure](NodeChannel* ch) {
-                    if (!index_channel->is_failed_channel(ch)) {
-                        auto st = ch->try_close();
-                        if (!st.ok()) {
-                            LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
-                                         << ", load_info=" << ch->print_load_info()
-                                         << ", error_msg=" << st.get_error_msg();
-                            err_st = st;
-                            index_channel->mark_as_failed(ch);
-                        }
-                    }
-                    if (index_channel->has_intolerable_failure()) {
-                        intolerable_failure = true;
-                    }
-                });
-            }
-        }
-    }
-
-    if (intolerable_failure) {
-        return err_st;
-    } else {
-        return Status::OK();
-    }
 }
 
 Status OlapTableSink::_fill_auto_increment_id(Chunk* chunk) {

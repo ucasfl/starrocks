@@ -113,11 +113,11 @@ public:
     // async close interface: try_close() -> [is_close_done()] -> close_wait()
     // if is_close_done() return true, close_wait() will not block
     // otherwise close_wait() will block
-    Status try_close(RuntimeState* state);
-
-    bool is_close_done();
+    Status try_close(RuntimeState* state) { return _tablet_sink_sender->try_close(state); }
 
     Status close_wait(RuntimeState* state, Status close_status);
+
+    bool is_close_done();
 
     // sync close() interface
     Status close(RuntimeState* state, Status close_status) override;

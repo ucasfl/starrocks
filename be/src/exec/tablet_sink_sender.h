@@ -92,6 +92,13 @@ public:
             return _send_chunk(partitions, tablet_indexes, validate_select_idx, chunk);
         }
     }
+
+    Status try_open(RuntimeState* state);
+    bool is_open_done();
+    Status open_wait();
+    // async close interface: try_close() -> [is_close_done()] -> close_wait()
+    // if is_close_done() return true, close_wait() will not block
+    // otherwise close_wait() will block
     Status try_close(RuntimeState* state);
 
     void for_each_node_channel(const std::function<void(NodeChannel*)>& func) {
@@ -136,6 +143,12 @@ private:
     std::vector<IndexChannel*> _channels;
     bool _colocate_mv_index{false};
     bool _enable_replicated_storage{false};
+    std::vector<ExprContext*> _output_expr_ctxs;
+
+    // unique load id
+    PUniqueId _load_id;
+    bool _open_done = false;
+    bool _close_done = false;
     TWriteQuorumType::type _write_quorum_type = TWriteQuorumType::MAJORITY;
     std::unordered_map<int64_t, std::unique_ptr<NodeChannel>> _node_channels;
     int _num_repicas = -1;

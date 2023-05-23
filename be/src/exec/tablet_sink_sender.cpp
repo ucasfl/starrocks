@@ -173,6 +173,79 @@ Status TabletSinkSender::_send_chunk_by_node(Chunk* chunk, IndexChannel* channel
     return Status::OK();
 }
 
+Status TabletSinkSender::try_open(RuntimeState* state) {
+    // Prepare the exprs to run.
+    RETURN_IF_ERROR(Expr::open(_output_expr_ctxs, state));
+    RETURN_IF_ERROR(_vectorized_partition->open(state));
+
+    if (_colocate_mv_index) {
+        for_each_node_channel([](NodeChannel* ch) { ch->try_open(); });
+    } else {
+        for_each_index_channel([](NodeChannel* ch) { ch->try_open(); });
+    }
+
+    return Status::OK();
+}
+
+bool TabletSinkSender::is_open_done() {
+    if (!_open_done) {
+        bool open_done = true;
+        if (_colocate_mv_index) {
+            for_each_node_channel([&open_done](NodeChannel* ch) { open_done &= ch->is_open_done(); });
+        } else {
+            for_each_index_channel([&open_done](NodeChannel* ch) { open_done &= ch->is_open_done(); });
+        }
+        _open_done = open_done;
+    }
+
+    return _open_done;
+}
+
+Status TabletSinkSender::open_wait() {
+    Status err_st = Status::OK();
+    if (_colocate_mv_index) {
+        for_each_node_channel([this, &err_st](NodeChannel* ch) {
+            auto st = ch->open_wait();
+            if (!st.ok()) {
+                LOG(WARNING) << ch->name() << ", tablet open failed, " << ch->print_load_info()
+                             << ", node=" << ch->node_info()->host << ":" << ch->node_info()->brpc_port
+                             << ", errmsg=" << st.get_error_msg();
+                err_st = st.clone_and_append(string(" be:") + ch->node_info()->host);
+                this->_mark_as_failed(ch);
+            }
+            // disable colocate mv index load if other BE not supported
+            if (!ch->enable_colocate_mv_index()) {
+                _colocate_mv_index = false;
+            }
+        });
+
+        if (_has_intolerable_failure()) {
+            LOG(WARNING) << "Open channel failed. load_id: " << _load_id << ", error: " << err_st.to_string();
+            return err_st;
+        }
+    } else {
+        for (auto& index_channel : _channels) {
+            index_channel->for_each_node_channel([&index_channel, &err_st](NodeChannel* ch) {
+                auto st = ch->open_wait();
+                if (!st.ok()) {
+                    LOG(WARNING) << ch->name() << ", tablet open failed, " << ch->print_load_info()
+                                 << ", node=" << ch->node_info()->host << ":" << ch->node_info()->brpc_port
+                                 << ", errmsg=" << st.get_error_msg();
+                    err_st = st.clone_and_append(string(" be:") + ch->node_info()->host);
+                    index_channel->mark_as_failed(ch);
+                }
+            });
+
+            if (index_channel->has_intolerable_failure()) {
+                LOG(WARNING) << "Open channel failed. load_id: " << _load_id << ", error: " << err_st.to_string();
+                return err_st;
+            }
+        }
+    }
+
+    return Status::OK();
+}
+
 Status TabletSinkSender::try_close(RuntimeState* state) {
     Status err_st = Status::OK();
     bool intolerable_failure = false;
