@@ -231,6 +231,9 @@ Status OlapTablePartitionParam::init(RuntimeState* state) {
         }
         VLOG(1) << "add partition:" << part->id << " start " << part->start_key.debug_string() << " end "
                 << part->end_key.debug_string();
+        if (t_part.__isset.associated_partition_ids) {
+            part->associated_partition_ids = t_part.associated_partition_ids;
+        }
     }
 
     return Status::OK();

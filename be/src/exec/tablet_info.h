@@ -167,7 +167,7 @@ struct OlapTablePartition {
     std::vector<ChunkRow> in_keys;
     int64_t num_buckets = 0;
     std::vector<OlapTableIndexTablets> indexes;
-    std::vector<int> associated_partition_ids;
+    std::vector<int64_t> associated_partition_ids;
 };
 
 struct PartionKeyComparator {

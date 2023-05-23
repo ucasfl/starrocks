@@ -226,6 +226,9 @@ struct TOlapTablePartition {
     
     // for logical sync materialized view
     10: optional i64 index_id
+    
+    // associated_partition_ids
+    11: optional list<i64> associated_partition_ids
 }
 
 struct TOlapTablePartitionParam {
