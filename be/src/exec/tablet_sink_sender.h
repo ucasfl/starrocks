@@ -92,6 +92,7 @@ public:
             return _send_chunk(partitions, tablet_indexes, validate_select_idx, chunk);
         }
     }
+    Status try_close(RuntimeState* state);
 
 private:
     Status _send_chunk(const std::vector<OlapTablePartition*>& partitions, const std::vector<uint32_t>& tablet_indexes,

@@ -173,4 +173,101 @@ Status TabletSinkSender::_send_chunk_by_node(Chunk* chunk, IndexChannel* channel
     return Status::OK();
 }
 
+Status TabletSinkSender::try_close(RuntimeState* state) {
+    Status err_st = Status::OK();
+    bool intolerable_failure = false;
+    if (_colocate_mv_index) {
+        for_each_node_channel([this, &err_st, &intolerable_failure](NodeChannel* ch) {
+            if (!this->is_failed_channel(ch)) {
+                auto st = ch->try_close();
+                if (!st.ok()) {
+                    LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
+                                 << ", load_info=" << ch->print_load_info() << ", error_msg=" << st.get_error_msg();
+                    err_st = st;
+                    this->mark_as_failed(ch);
+                }
+            }
+            if (this->has_intolerable_failure()) {
+                intolerable_failure = true;
+            }
+        });
+    } else {
+        for (auto& index_channel : _channels) {
+            if (index_channel->has_incremental_node_channel()) {
+                // close initial node channel and wait it done
+                index_channel->for_each_initial_node_channel(
+                        [&index_channel, &err_st, &intolerable_failure](NodeChannel* ch) {
+                            if (!index_channel->is_failed_channel(ch)) {
+                                auto st = ch->try_close(true);
+                                if (!st.ok()) {
+                                    LOG(WARNING) << "close initial channel failed. channel_name=" << ch->name()
+                                                 << ", load_info=" << ch->print_load_info()
+                                                 << ", error_msg=" << st.get_error_msg();
+                                    err_st = st;
+                                    index_channel->mark_as_failed(ch);
+                                }
+                            }
+                            if (index_channel->has_intolerable_failure()) {
+                                intolerable_failure = true;
+                            }
+                        });
+
+                if (intolerable_failure) {
+                    break;
+                }
+
+                bool is_initial_node_channel_close_done = true;
+                index_channel->for_each_initial_node_channel([&is_initial_node_channel_close_done](NodeChannel* ch) {
+                    is_initial_node_channel_close_done &= ch->is_close_done();
+                });
+
+                // close initial node channel not finish, can not close incremental node channel
+                if (!is_initial_node_channel_close_done) {
+                    break;
+                }
+
+                // close incremental node channel
+                index_channel->for_each_incremental_node_channel(
+                        [&index_channel, &err_st, &intolerable_failure](NodeChannel* ch) {
+                            if (!index_channel->is_failed_channel(ch)) {
+                                auto st = ch->try_close();
+                                if (!st.ok()) {
+                                    LOG(WARNING) << "close incremental channel failed. channel_name=" << ch->name()
+                                                 << ", load_info=" << ch->print_load_info()
+                                                 << ", error_msg=" << st.get_error_msg();
+                                    err_st = st;
+                                    index_channel->mark_as_failed(ch);
+                                }
+                            }
+                            if (index_channel->has_intolerable_failure()) {
+                                intolerable_failure = true;
+                            }
+                        });
+
+            } else {
+                index_channel->for_each_node_channel([&index_channel, &err_st, &intolerable_failure](NodeChannel* ch) {
+                    if (!index_channel->is_failed_channel(ch)) {
+                        auto st = ch->try_close();
+                        if (!st.ok()) {
+                            LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
+                                         << ", load_info=" << ch->print_load_info()
+                                         << ", error_msg=" << st.get_error_msg();
+                            err_st = st;
+                            index_channel->mark_as_failed(ch);
+                        }
+                    }
+                    if (index_channel->has_intolerable_failure()) {
+                        intolerable_failure = true;
+                    }
+                });
+            }
+        }
+    }
+
+    if (intolerable_failure) {
+        return err_st;
+    } else {
+        return Status::OK();
+    }
+}
 } // namespace starrocks::stream_load
