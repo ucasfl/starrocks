@@ -325,15 +325,7 @@ Status OlapTableSink::open_wait() {
 }
 
 bool OlapTableSink::is_full() {
-    bool full = false;
-
-    if (_colocate_mv_index) {
-        for_each_node_channel([&full](NodeChannel* ch) { full |= ch->is_full(); });
-    } else {
-        for_each_index_channel([&full](NodeChannel* ch) { full |= ch->is_full(); });
-    }
-
-    return full || _is_automatic_partition_running.load(std::memory_order_acquire);
+    return _tablet_sink_sender->is_full() || _is_automatic_partition_running.load(std::memory_order_acquire);
 }
 
 Status OlapTableSink::_automatic_create_partition() {
@@ -645,17 +637,7 @@ Status OlapTableSink::_fill_auto_increment_id_internal(Chunk* chunk, SlotDescrip
 }
 
 bool OlapTableSink::is_close_done() {
-    if (!_close_done) {
-        bool close_done = true;
-        if (_colocate_mv_index) {
-            for_each_node_channel([&close_done](NodeChannel* ch) { close_done &= ch->is_close_done(); });
-        } else {
-            for_each_index_channel([&close_done](NodeChannel* ch) { close_done &= ch->is_close_done(); });
-        }
-        _close_done = close_done;
-    }
-
-    return _close_done;
+    return _tablet_sink_sender->is_close_done();
 }
 
 Status OlapTableSink::close(RuntimeState* state, Status close_status) {

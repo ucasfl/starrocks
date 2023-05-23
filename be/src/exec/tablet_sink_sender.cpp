@@ -201,6 +201,18 @@ bool TabletSinkSender::is_open_done() {
     return _open_done;
 }
 
+bool TabletSinkSender::is_full() {
+    bool full = false;
+
+    if (_colocate_mv_index) {
+        for_each_node_channel([&full](NodeChannel* ch) { full |= ch->is_full(); });
+    } else {
+        for_each_index_channel([&full](NodeChannel* ch) { full |= ch->is_full(); });
+    }
+
+    return full;
+}
+
 Status TabletSinkSender::open_wait() {
     Status err_st = Status::OK();
     if (_colocate_mv_index) {
@@ -343,4 +355,19 @@ Status TabletSinkSender::try_close(RuntimeState* state) {
         return Status::OK();
     }
 }
+
+bool TabletSinkSender::is_close_done() {
+    if (!_close_done) {
+        bool close_done = true;
+        if (_colocate_mv_index) {
+            for_each_node_channel([&close_done](NodeChannel* ch) { close_done &= ch->is_close_done(); });
+        } else {
+            for_each_index_channel([&close_done](NodeChannel* ch) { close_done &= ch->is_close_done(); });
+        }
+        _close_done = close_done;
+    }
+
+    return _close_done;
+}
+
 } // namespace starrocks::stream_load

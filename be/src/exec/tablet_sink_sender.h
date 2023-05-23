@@ -94,12 +94,15 @@ public:
     }
 
     Status try_open(RuntimeState* state);
-    bool is_open_done();
     Status open_wait();
     // async close interface: try_close() -> [is_close_done()] -> close_wait()
     // if is_close_done() return true, close_wait() will not block
     // otherwise close_wait() will block
     Status try_close(RuntimeState* state);
+
+    bool is_open_done();
+    bool is_full();
+    bool is_close_done();
 
     void for_each_node_channel(const std::function<void(NodeChannel*)>& func) {
         for (auto& it : _node_channels) {
