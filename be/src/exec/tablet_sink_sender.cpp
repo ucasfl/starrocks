@@ -66,75 +66,64 @@
 
 namespace starrocks::stream_load {
 
-Status TabletSinkSender::_send_chunk(Chunk* chunk) {
+Status TabletSinkSender::_send_chunk(const std::vector<OlapTablePartition*>& partitions,
+                                     const std::vector<uint32_t>& tablet_indexes,
+                                     const std::vector<uint16_t>& validate_select_idx, Chunk* chunk) {
     size_t num_rows = chunk->num_rows();
-    size_t selection_size = _validate_select_idx.size();
+    size_t selection_size = validate_select_idx.size();
     if (selection_size == 0) {
         return Status::OK();
     }
     _tablet_ids.resize(num_rows);
     if (num_rows > selection_size) {
-        for (size_t i = 0; i < selection_size; ++i) {
-            _partition_ids.emplace(_partitions[_validate_select_idx[i]]->id);
-        }
-
-        size_t index_size = _partitions[_validate_select_idx[0]]->indexes.size();
+        size_t index_size = partitions[validate_select_idx[0]]->indexes.size();
         for (size_t i = 0; i < index_size; ++i) {
             for (size_t j = 0; j < selection_size; ++j) {
-                uint16_t selection = _validate_select_idx[j];
-                _tablet_ids[selection] = _partitions[selection]->indexes[i].tablets[_tablet_indexes[selection]];
+                uint16_t selection = validate_select_idx[j];
+                _tablet_ids[selection] = partitions[selection]->indexes[i].tablets[tablet_indexes[selection]];
             }
-            RETURN_IF_ERROR(_send_chunk_by_node(chunk, _channels[i].get(), _validate_select_idx));
+            RETURN_IF_ERROR(_send_chunk_by_node(chunk, _channels[i], validate_select_idx));
         }
     } else { // Improve for all rows are selected
-        for (size_t i = 0; i < num_rows; ++i) {
-            _partition_ids.emplace(_partitions[i]->id);
-        }
 
-        size_t index_size = _partitions[0]->indexes.size();
+        size_t index_size = partitions[0]->indexes.size();
         for (size_t i = 0; i < index_size; ++i) {
             for (size_t j = 0; j < num_rows; ++j) {
-                _tablet_ids[j] = _partitions[j]->indexes[i].tablets[_tablet_indexes[j]];
+                _tablet_ids[j] = partitions[j]->indexes[i].tablets[tablet_indexes[j]];
             }
-            RETURN_IF_ERROR(_send_chunk_by_node(chunk, _channels[i].get(), _validate_select_idx));
+            RETURN_IF_ERROR(_send_chunk_by_node(chunk, _channels[i], validate_select_idx));
         }
     }
     return Status::OK();
 }
 
-Status TabletSinkSender::_send_chunk_with_colocate_index(Chunk* chunk) {
+Status TabletSinkSender::_send_chunk_with_colocate_index(const std::vector<OlapTablePartition*>& partitions,
+                                                         const std::vector<uint32_t>& tablet_indexes,
+                                                         const std::vector<uint16_t>& validate_select_idx,
+                                                         Chunk* chunk) {
     Status err_st = Status::OK();
     size_t num_rows = chunk->num_rows();
-    size_t selection_size = _validate_select_idx.size();
+    size_t selection_size = validate_select_idx.size();
     if (selection_size == 0) {
         return Status::OK();
     }
     if (num_rows > selection_size) {
-        for (size_t i = 0; i < selection_size; ++i) {
-            _partition_ids.emplace(_partitions[_validate_select_idx[i]]->id);
-        }
-
-        size_t index_size = _partitions[_validate_select_idx[0]]->indexes.size();
+        size_t index_size = partitions[validate_select_idx[0]]->indexes.size();
         _index_tablet_ids.resize(index_size);
         for (size_t i = 0; i < index_size; ++i) {
             _index_tablet_ids[i].resize(num_rows);
             for (size_t j = 0; j < selection_size; ++j) {
-                uint16_t selection = _validate_select_idx[j];
-                _index_tablet_ids[i][selection] =
-                        _partitions[selection]->indexes[i].tablets[_tablet_indexes[selection]];
+                uint16_t selection = validate_select_idx[j];
+                _index_tablet_ids[i][selection] = partitions[selection]->indexes[i].tablets[tablet_indexes[selection]];
             }
         }
     } else { // Improve for all rows are selected
-        for (size_t i = 0; i < num_rows; ++i) {
-            _partition_ids.emplace(_partitions[i]->id);
-        }
-
-        size_t index_size = _partitions[0]->indexes.size();
+        size_t index_size = partitions[0]->indexes.size();
         _index_tablet_ids.resize(index_size);
         for (size_t i = 0; i < index_size; ++i) {
             _index_tablet_ids[i].resize(num_rows);
             for (size_t j = 0; j < num_rows; ++j) {
-                _index_tablet_ids[i][j] = _partitions[j]->indexes[i].tablets[_tablet_indexes[j]];
+                _index_tablet_ids[i][j] = partitions[j]->indexes[i].tablets[tablet_indexes[j]];
             }
         }
     }
@@ -142,7 +131,7 @@ Status TabletSinkSender::_send_chunk_with_colocate_index(Chunk* chunk) {
 }
 
 Status TabletSinkSender::_send_chunk_by_node(Chunk* chunk, IndexChannel* channel,
-                                             std::vector<uint16_t>& selection_idx) {
+                                             const std::vector<uint16_t>& selection_idx) {
     Status err_st = Status::OK();
     for (auto& it : channel->_node_channels) {
         int64_t be_id = it.first;

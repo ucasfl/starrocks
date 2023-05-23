@@ -237,6 +237,7 @@ Status OlapTableSink::prepare(RuntimeState* state) {
 
 Status OlapTableSink::_init_node_channels(RuntimeState* state) {
     const auto& partitions = _vectorized_partition->get_partitions();
+    std::vector<IndexChannel*> index_channels;
     for (int i = 0; i < _schema->indexes().size(); ++i) {
         // collect all tablets belong to this rollup
         std::vector<PTabletWithPartition> tablets;
@@ -288,6 +289,7 @@ Status OlapTableSink::_init_node_channels(RuntimeState* state) {
         }
         auto channel = std::make_unique<IndexChannel>(this, index->index_id);
         RETURN_IF_ERROR(channel->init(state, tablets, false));
+        index_channels.emplace_back(channel.get());
         _channels.emplace_back(std::move(channel));
     }
     if (_colocate_mv_index) {
@@ -295,6 +297,8 @@ Status OlapTableSink::_init_node_channels(RuntimeState* state) {
             RETURN_IF_ERROR(it.second->init(state));
         }
     }
+    _tablet_sink_sender = std::make_unique<TabletSinkSender>(_location, _vectorized_partition, index_channels,
+                                                             _colocate_mv_index, _enable_replicated_storage);
     return Status::OK();
 }
 
@@ -411,7 +415,7 @@ Status OlapTableSink::_automatic_create_partition() {
     VLOG(1) << "automatic partition rpc end response " << result;
     if (result.status.status_code == TStatusCode::OK) {
         // add new created partitions
-        RETURN_IF_ERROR(_vectorized_partition->add_partitions(result.partitions));
+        RETURN_IF_ERROR(_vectorized_partition->add_partitions(result.partitions, _partition_ids));
 
         // add new tablet locations
         _location->add_locations(result.tablets);
@@ -547,7 +551,7 @@ Status OlapTableSink::send_chunk(RuntimeState* state, Chunk* chunk) {
 
                 RETURN_IF_ERROR(_vectorized_partition->find_tablets(chunk, &_partitions, &_tablet_indexes,
                                                                     &_validate_selection, &invalid_row_indexs, _txn_id,
-                                                                    &_partition_not_exist_row_values));
+                                                                    &_partition_not_exist_row_values, _partition_ids));
 
                 if (!_partition_not_exist_row_values[0].empty()) {
                     _is_automatic_partition_running.store(true, std::memory_order_release);
@@ -568,13 +572,13 @@ Status OlapTableSink::send_chunk(RuntimeState* state, Chunk* chunk) {
                         // after the partition is created, go through the data again
                         RETURN_IF_ERROR(_vectorized_partition->find_tablets(chunk, &_partitions, &_tablet_indexes,
                                                                             &_validate_selection, &invalid_row_indexs,
-                                                                            _txn_id, nullptr));
+                                                                            _txn_id, nullptr, _partition_ids));
                     }
                 }
             } else {
                 RETURN_IF_ERROR(_vectorized_partition->find_tablets(chunk, &_partitions, &_tablet_indexes,
                                                                     &_validate_selection, &invalid_row_indexs, _txn_id,
-                                                                    nullptr));
+                                                                    nullptr, _partition_ids));
                 _has_automatic_partition = false;
             }
             // Note: must padding char column after find_tablets.
@@ -630,129 +634,7 @@ Status OlapTableSink::send_chunk(RuntimeState* state, Chunk* chunk) {
     StarRocksMetrics::instance()->load_bytes_total.increment(serialize_size);
 
     SCOPED_TIMER(_send_data_timer);
-
-    if (_colocate_mv_index) {
-        return _send_chunk_with_colocate_index(chunk);
-    } else {
-        return _send_chunk(chunk);
-    }
-}
-
-Status OlapTableSink::_send_chunk(Chunk* chunk) {
-    size_t num_rows = chunk->num_rows();
-    size_t selection_size = _validate_select_idx.size();
-    if (selection_size == 0) {
-        return Status::OK();
-    }
-    _tablet_ids.resize(num_rows);
-    if (num_rows > selection_size) {
-        for (size_t i = 0; i < selection_size; ++i) {
-            _partition_ids.emplace(_partitions[_validate_select_idx[i]]->id);
-        }
-
-        size_t index_size = _partitions[_validate_select_idx[0]]->indexes.size();
-        for (size_t i = 0; i < index_size; ++i) {
-            for (size_t j = 0; j < selection_size; ++j) {
-                uint16_t selection = _validate_select_idx[j];
-                _tablet_ids[selection] = _partitions[selection]->indexes[i].tablets[_tablet_indexes[selection]];
-            }
-            RETURN_IF_ERROR(_send_chunk_by_node(chunk, _channels[i].get(), _validate_select_idx));
-        }
-    } else { // Improve for all rows are selected
-        for (size_t i = 0; i < num_rows; ++i) {
-            _partition_ids.emplace(_partitions[i]->id);
-        }
-
-        size_t index_size = _partitions[0]->indexes.size();
-        for (size_t i = 0; i < index_size; ++i) {
-            for (size_t j = 0; j < num_rows; ++j) {
-                _tablet_ids[j] = _partitions[j]->indexes[i].tablets[_tablet_indexes[j]];
-            }
-            RETURN_IF_ERROR(_send_chunk_by_node(chunk, _channels[i].get(), _validate_select_idx));
-        }
-    }
-    return Status::OK();
-}
-
-Status OlapTableSink::_send_chunk_with_colocate_index(Chunk* chunk) {
-    Status err_st = Status::OK();
-    size_t num_rows = chunk->num_rows();
-    size_t selection_size = _validate_select_idx.size();
-    if (selection_size == 0) {
-        return Status::OK();
-    }
-    if (num_rows > selection_size) {
-        for (size_t i = 0; i < selection_size; ++i) {
-            _partition_ids.emplace(_partitions[_validate_select_idx[i]]->id);
-        }
-
-        size_t index_size = _partitions[_validate_select_idx[0]]->indexes.size();
-        _index_tablet_ids.resize(index_size);
-        for (size_t i = 0; i < index_size; ++i) {
-            _index_tablet_ids[i].resize(num_rows);
-            for (size_t j = 0; j < selection_size; ++j) {
-                uint16_t selection = _validate_select_idx[j];
-                _index_tablet_ids[i][selection] =
-                        _partitions[selection]->indexes[i].tablets[_tablet_indexes[selection]];
-            }
-        }
-    } else { // Improve for all rows are selected
-        for (size_t i = 0; i < num_rows; ++i) {
-            _partition_ids.emplace(_partitions[i]->id);
-        }
-
-        size_t index_size = _partitions[0]->indexes.size();
-        _index_tablet_ids.resize(index_size);
-        for (size_t i = 0; i < index_size; ++i) {
-            _index_tablet_ids[i].resize(num_rows);
-            for (size_t j = 0; j < num_rows; ++j) {
-                _index_tablet_ids[i][j] = _partitions[j]->indexes[i].tablets[_tablet_indexes[j]];
-            }
-        }
-    }
-    return Status::OK();
-}
-
-Status OlapTableSink::_send_chunk_by_node(Chunk* chunk, IndexChannel* channel, std::vector<uint16_t>& selection_idx) {
-    Status err_st = Status::OK();
-    for (auto& it : channel->_node_channels) {
-        int64_t be_id = it.first;
-        _node_select_idx.clear();
-        _node_select_idx.reserve(selection_idx.size());
-        for (unsigned short selection : selection_idx) {
-            std::vector<int64_t>& be_ids = channel->_tablet_to_be.find(_tablet_ids[selection])->second;
-            if (_enable_replicated_storage) {
-                // TODO(meegoo): add backlist policy
-                // first replica is primary replica, which determined by FE now
-                // only send to primary replica when enable replicated storage engine
-                if (be_ids[0] == be_id) {
-                    _node_select_idx.emplace_back(selection);
-                }
-            } else {
-                if (std::find(be_ids.begin(), be_ids.end(), be_id) != be_ids.end()) {
-                    _node_select_idx.emplace_back(selection);
-                }
-            }
-        }
-        NodeChannel* node = it.second.get();
-        auto st = node->add_chunk(chunk, _tablet_ids, _node_select_idx, 0, _node_select_idx.size());
-
-        if (!st.ok()) {
-            LOG(WARNING) << node->name() << ", tablet add chunk failed, " << node->print_load_info()
-                         << ", node=" << node->node_info()->host << ":" << node->node_info()->brpc_port
-                         << ", errmsg=" << st.get_error_msg();
-            channel->mark_as_failed(node);
-            err_st = st;
-            // we only send to primary replica, if it fail whole load fail
-            if (_enable_replicated_storage) {
-                return err_st;
-            }
-        }
-        if (channel->has_intolerable_failure()) {
-            return err_st;
-        }
-    }
-    return Status::OK();
+    return _tablet_sink_sender->send_chunk(_partitions, _tablet_indexes, _validate_select_idx, chunk);
 }
 
 Status OlapTableSink::try_close(RuntimeState* state) {
@@ -1341,7 +1223,6 @@ Status OlapTableSink::reset_epoch(RuntimeState* state) {
     _channels.clear();
     _node_channels.clear();
     _failed_channels.clear();
-    _partition_ids.clear();
     return Status::OK();
 }
 

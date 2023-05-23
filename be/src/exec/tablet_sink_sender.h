@@ -74,34 +74,48 @@ namespace stream_load {
 // TabletSinkSender will control one index/table's send chunks.
 class TabletSinkSender {
 public:
+    TabletSinkSender(OlapTableLocationParam* location, OlapTablePartitionParam* vectorized_partition,
+                     std::vector<IndexChannel*> channels, bool colocate_mv_index, bool enable_replicated_storage)
+            : _location(location),
+              _vectorized_partition(vectorized_partition),
+              _channels(std::move(channels)),
+              _colocate_mv_index(colocate_mv_index),
+              _enable_replicated_storage(enable_replicated_storage) {}
+    ~TabletSinkSender() = default;
+
+public:
+    Status send_chunk(const std::vector<OlapTablePartition*>& partitions, const std::vector<uint32_t>& tablet_indexes,
+                      const std::vector<uint16_t>& validate_select_idx, Chunk* chunk) {
+        if (_colocate_mv_index) {
+            return _send_chunk_with_colocate_index(partitions, tablet_indexes, validate_select_idx, chunk);
+        } else {
+            return _send_chunk(partitions, tablet_indexes, validate_select_idx, chunk);
+        }
+    }
+
 private:
-    Status _send_chunk(Chunk* chunk);
+    Status _send_chunk(const std::vector<OlapTablePartition*>& partitions, const std::vector<uint32_t>& tablet_indexes,
+                       const std::vector<uint16_t>& validate_select_idx, Chunk* chunk);
 
-    Status _send_chunk_with_colocate_index(Chunk* chunk);
+    Status _send_chunk_with_colocate_index(const std::vector<OlapTablePartition*>& _partitions,
+                                           const std::vector<uint32_t>& tablet_indexes,
+                                           const std::vector<uint16_t>& validate_select_idx, Chunk* chunk);
 
-    Status _send_chunk_by_node(Chunk* chunk, IndexChannel* channel, std::vector<uint16_t>& selection_idx);
-
-    Status _fill_auto_increment_id(Chunk* chunk);
-
-    Status _fill_auto_increment_id_internal(Chunk* chunk, SlotDescriptor* slot, int64_t table_id);
+    Status _send_chunk_by_node(Chunk* chunk, IndexChannel* channel, const std::vector<uint16_t>& selection_idx);
 
 private:
-    bool _enable_replicated_storage{false};
-    std::set<int64_t> _partition_ids;
     OlapTableLocationParam* _location = nullptr;
+    // partition schema
+    OlapTablePartitionParam* _vectorized_partition = nullptr;
     // index_channel
-    std::vector<std::unique_ptr<IndexChannel>> _channels;
-    std::vector<OlapTablePartition*> _partitions;
-    std::vector<uint32_t> _tablet_indexes;
-    // one chunk selection index for partition validation and data validation
-    std::vector<uint16_t> _validate_select_idx;
+    std::vector<IndexChannel*> _channels;
+    bool _colocate_mv_index{false};
+    bool _enable_replicated_storage{false};
+
     // one chunk selection for BE node
     std::vector<uint32_t> _node_select_idx;
     std::vector<int64_t> _tablet_ids;
-    OlapTablePartitionParam* _vectorized_partition = nullptr;
     std::vector<std::vector<int64_t>> _index_tablet_ids;
-    // Store the output expr comput result column
-    std::unique_ptr<Chunk> _output_chunk;
 };
 
 } // namespace stream_load

@@ -49,6 +49,7 @@
 #include "exec/data_sink.h"
 #include "exec/tablet_info.h"
 #include "exec/tablet_sink_index_channel.h"
+#include "exec/tablet_sink_sender.h"
 #include "gen_cpp/Types_types.h"
 #include "gen_cpp/doris_internal_service.pb.h"
 #include "gen_cpp/internal_service.pb.h"
@@ -75,6 +76,7 @@ namespace stream_load {
 class AddBatchCounter;
 class NodeChannel;
 class IndexChannel;
+class TabletSinkSender;
 
 // Write data to Olap Table.
 // When OlapTableSink::open() called, there will be a consumer thread running in the background.
@@ -147,12 +149,6 @@ private:
 
     static void _print_decimal_error_msg(RuntimeState* state, const DecimalV2Value& decimal, SlotDescriptor* desc);
 
-    Status _send_chunk(Chunk* chunk);
-
-    Status _send_chunk_with_colocate_index(Chunk* chunk);
-
-    Status _send_chunk_by_node(Chunk* chunk, IndexChannel* channel, std::vector<uint16_t>& selection_idx);
-
     Status _fill_auto_increment_id(Chunk* chunk);
 
     Status _fill_auto_increment_id_internal(Chunk* chunk, SlotDescriptor* slot, int64_t table_id);
@@ -217,9 +213,13 @@ private:
 
     // TODO(zc): think about cache this data
     std::shared_ptr<OlapTableSchemaParam> _schema;
+    OlapTablePartitionParam* _vectorized_partition = nullptr;
     StarRocksNodesInfo* _nodes_info = nullptr;
+    OlapTableLocationParam* _location = nullptr;
+
     std::vector<DecimalV2Value> _max_decimalv2_val;
     std::vector<DecimalV2Value> _min_decimalv2_val;
+
     // one chunk selection index for partition validation and data validation
     std::vector<uint16_t> _validate_select_idx;
     // one chunk selection for data validation
@@ -227,19 +227,15 @@ private:
 
     RuntimeProfile* _profile = nullptr;
 
-    std::set<int64_t> _partition_ids;
-    OlapTableLocationParam* _location = nullptr;
     // index_channel
     std::vector<std::unique_ptr<IndexChannel>> _channels;
     std::vector<OlapTablePartition*> _partitions;
+    std::set<int64_t> _partition_ids;
     std::vector<uint32_t> _tablet_indexes;
-    // one chunk selection for BE node
-    std::vector<uint32_t> _node_select_idx;
-    std::vector<int64_t> _tablet_ids;
-    OlapTablePartitionParam* _vectorized_partition = nullptr;
-    std::vector<std::vector<int64_t>> _index_tablet_ids;
     // Store the output expr comput result column
     std::unique_ptr<Chunk> _output_chunk;
+
+    std::unique_ptr<TabletSinkSender> _tablet_sink_sender;
 
     // Stats for this
     int64_t _convert_batch_ns = 0;
