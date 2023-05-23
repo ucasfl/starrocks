@@ -76,8 +76,7 @@ public:
             PUniqueId load_id, int64_t txn_id, OlapTableLocationParam* location,
             OlapTablePartitionParam* vectorized_partition, std::vector<IndexChannel*> channels,
             std::unordered_map<int64_t, NodeChannel*> node_channels, std::vector<ExprContext*> output_expr_ctxs,
-            bool colocate_mv_index, bool enable_replicated_storage, TWriteQuorumType::type write_quorum_type,
-            int num_repicas)
+            bool enable_replicated_storage, TWriteQuorumType::type write_quorum_type, int num_repicas)
             : _load_id(load_id),
               _txn_id(txn_id),
               _location(location),
@@ -85,35 +84,32 @@ public:
               _channels(std::move(channels)),
               _node_channels(std::move(node_channels)),
               _output_expr_ctxs(std::move(output_expr_ctxs)),
-              _colocate_mv_index(colocate_mv_index),
               _enable_replicated_storage(enable_replicated_storage),
               _write_quorum_type(write_quorum_type),
               _num_repicas(num_repicas) {}
     ~TabletSinkSender() = default;
 
 public:
-    Status send_chunk(const std::vector<OlapTablePartition*>& partitions, const std::vector<uint32_t>& tablet_indexes,
-                      const std::vector<uint16_t>& validate_select_idx, Chunk* chunk) {
-        if (_colocate_mv_index) {
-            return _send_chunk_with_colocate_index(partitions, tablet_indexes, validate_select_idx, chunk);
-        } else {
-            return _send_chunk(partitions, tablet_indexes, validate_select_idx, chunk);
-        }
+    virtual Status send_chunk(const std::vector<OlapTablePartition*>& partitions,
+                              const std::vector<uint32_t>& tablet_indexes,
+                              const std::vector<uint16_t>& validate_select_idx, Chunk* chunk) {
+        return _send_chunk(partitions, tablet_indexes, validate_select_idx, chunk);
     }
 
-    Status try_open(RuntimeState* state);
-    Status open_wait();
+    virtual Status try_open(RuntimeState* state);
+    virtual Status open_wait();
     // async close interface: try_close() -> [is_close_done()] -> close_wait()
     // if is_close_done() return true, close_wait() will not block
     // otherwise close_wait() will block
-    Status try_close(RuntimeState* state);
-    Status close_wait(RuntimeState* state, Status close_status, RuntimeProfile::Counter* close_timer,
-                      RuntimeProfile::Counter* serialize_chunk_timer, RuntimeProfile::Counter* send_rpc_timer,
-                      RuntimeProfile::Counter* server_rpc_timer, RuntimeProfile::Counter* server_wait_flush_timer);
+    virtual Status try_close(RuntimeState* state);
+    virtual Status close_wait(RuntimeState* state, Status close_status, RuntimeProfile::Counter* close_timer,
+                              RuntimeProfile::Counter* serialize_chunk_timer, RuntimeProfile::Counter* send_rpc_timer,
+                              RuntimeProfile::Counter* server_rpc_timer,
+                              RuntimeProfile::Counter* server_wait_flush_timer);
 
-    bool is_open_done();
-    bool is_full();
-    bool is_close_done();
+    virtual bool is_open_done();
+    virtual bool is_full();
+    virtual bool is_close_done();
 
     void for_each_node_channel(const std::function<void(NodeChannel*)>& func) {
         for (auto& it : _node_channels) {
@@ -127,13 +123,9 @@ public:
         }
     }
 
-private:
+protected:
     Status _send_chunk(const std::vector<OlapTablePartition*>& partitions, const std::vector<uint32_t>& tablet_indexes,
                        const std::vector<uint16_t>& validate_select_idx, Chunk* chunk);
-
-    Status _send_chunk_with_colocate_index(const std::vector<OlapTablePartition*>& _partitions,
-                                           const std::vector<uint32_t>& tablet_indexes,
-                                           const std::vector<uint16_t>& validate_select_idx, Chunk* chunk);
 
     Status _send_chunk_by_node(Chunk* chunk, IndexChannel* channel, const std::vector<uint16_t>& selection_idx);
 
@@ -149,7 +141,7 @@ private:
         }
     }
 
-private:
+protected:
     // unique load id
     PUniqueId _load_id;
     int64_t _txn_id = -1;
@@ -160,7 +152,6 @@ private:
     std::vector<IndexChannel*> _channels;
     std::unordered_map<int64_t, NodeChannel*> _node_channels;
     std::vector<ExprContext*> _output_expr_ctxs;
-    bool _colocate_mv_index{false};
     bool _enable_replicated_storage{false};
     TWriteQuorumType::type _write_quorum_type = TWriteQuorumType::MAJORITY;
     int _num_repicas = -1;

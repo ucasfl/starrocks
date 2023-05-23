@@ -45,6 +45,7 @@
 #include "exec/pipeline/query_context.h"
 #include "exec/pipeline/stream_epoch_manager.h"
 #include "exec/tablet_sink.h"
+#include "exec/tablet_sink_colocate_sender.h"
 #include "exprs/expr.h"
 #include "gutil/strings/fastmem.h"
 #include "gutil/strings/join.h"
@@ -97,39 +98,6 @@ Status TabletSinkSender::_send_chunk(const std::vector<OlapTablePartition*>& par
     return Status::OK();
 }
 
-Status TabletSinkSender::_send_chunk_with_colocate_index(const std::vector<OlapTablePartition*>& partitions,
-                                                         const std::vector<uint32_t>& tablet_indexes,
-                                                         const std::vector<uint16_t>& validate_select_idx,
-                                                         Chunk* chunk) {
-    Status err_st = Status::OK();
-    size_t num_rows = chunk->num_rows();
-    size_t selection_size = validate_select_idx.size();
-    if (selection_size == 0) {
-        return Status::OK();
-    }
-    if (num_rows > selection_size) {
-        size_t index_size = partitions[validate_select_idx[0]]->indexes.size();
-        _index_tablet_ids.resize(index_size);
-        for (size_t i = 0; i < index_size; ++i) {
-            _index_tablet_ids[i].resize(num_rows);
-            for (size_t j = 0; j < selection_size; ++j) {
-                uint16_t selection = validate_select_idx[j];
-                _index_tablet_ids[i][selection] = partitions[selection]->indexes[i].tablets[tablet_indexes[selection]];
-            }
-        }
-    } else { // Improve for all rows are selected
-        size_t index_size = partitions[0]->indexes.size();
-        _index_tablet_ids.resize(index_size);
-        for (size_t i = 0; i < index_size; ++i) {
-            _index_tablet_ids[i].resize(num_rows);
-            for (size_t j = 0; j < num_rows; ++j) {
-                _index_tablet_ids[i][j] = partitions[j]->indexes[i].tablets[tablet_indexes[j]];
-            }
-        }
-    }
-    return Status::OK();
-}
-
 Status TabletSinkSender::_send_chunk_by_node(Chunk* chunk, IndexChannel* channel,
                                              const std::vector<uint16_t>& selection_idx) {
     Status err_st = Status::OK();
@@ -177,24 +145,14 @@ Status TabletSinkSender::try_open(RuntimeState* state) {
     // Prepare the exprs to run.
     RETURN_IF_ERROR(Expr::open(_output_expr_ctxs, state));
     RETURN_IF_ERROR(_vectorized_partition->open(state));
-
-    if (_colocate_mv_index) {
-        for_each_node_channel([](NodeChannel* ch) { ch->try_open(); });
-    } else {
-        for_each_index_channel([](NodeChannel* ch) { ch->try_open(); });
-    }
-
+    for_each_index_channel([](NodeChannel* ch) { ch->try_open(); });
     return Status::OK();
 }
 
 bool TabletSinkSender::is_open_done() {
     if (!_open_done) {
         bool open_done = true;
-        if (_colocate_mv_index) {
-            for_each_node_channel([&open_done](NodeChannel* ch) { open_done &= ch->is_open_done(); });
-        } else {
-            for_each_index_channel([&open_done](NodeChannel* ch) { open_done &= ch->is_open_done(); });
-        }
+        for_each_index_channel([&open_done](NodeChannel* ch) { open_done &= ch->is_open_done(); });
         _open_done = open_done;
     }
 
@@ -203,55 +161,28 @@ bool TabletSinkSender::is_open_done() {
 
 bool TabletSinkSender::is_full() {
     bool full = false;
-
-    if (_colocate_mv_index) {
-        for_each_node_channel([&full](NodeChannel* ch) { full |= ch->is_full(); });
-    } else {
-        for_each_index_channel([&full](NodeChannel* ch) { full |= ch->is_full(); });
-    }
-
+    for_each_index_channel([&full](NodeChannel* ch) { full |= ch->is_full(); });
     return full;
 }
 
 Status TabletSinkSender::open_wait() {
     Status err_st = Status::OK();
-    if (_colocate_mv_index) {
-        for_each_node_channel([this, &err_st](NodeChannel* ch) {
+
+    for (auto& index_channel : _channels) {
+        index_channel->for_each_node_channel([&index_channel, &err_st](NodeChannel* ch) {
             auto st = ch->open_wait();
             if (!st.ok()) {
                 LOG(WARNING) << ch->name() << ", tablet open failed, " << ch->print_load_info()
                              << ", node=" << ch->node_info()->host << ":" << ch->node_info()->brpc_port
                              << ", errmsg=" << st.get_error_msg();
                 err_st = st.clone_and_append(string(" be:") + ch->node_info()->host);
-                this->_mark_as_failed(ch);
-            }
-            // disable colocate mv index load if other BE not supported
-            if (!ch->enable_colocate_mv_index()) {
-                _colocate_mv_index = false;
+                index_channel->mark_as_failed(ch);
             }
         });
 
-        if (_has_intolerable_failure()) {
+        if (index_channel->has_intolerable_failure()) {
             LOG(WARNING) << "Open channel failed. load_id: " << _load_id << ", error: " << err_st.to_string();
             return err_st;
-        }
-    } else {
-        for (auto& index_channel : _channels) {
-            index_channel->for_each_node_channel([&index_channel, &err_st](NodeChannel* ch) {
-                auto st = ch->open_wait();
-                if (!st.ok()) {
-                    LOG(WARNING) << ch->name() << ", tablet open failed, " << ch->print_load_info()
-                                 << ", node=" << ch->node_info()->host << ":" << ch->node_info()->brpc_port
-                                 << ", errmsg=" << st.get_error_msg();
-                    err_st = st.clone_and_append(string(" be:") + ch->node_info()->host);
-                    index_channel->mark_as_failed(ch);
-                }
-            });
-
-            if (index_channel->has_intolerable_failure()) {
-                LOG(WARNING) << "Open channel failed. load_id: " << _load_id << ", error: " << err_st.to_string();
-                return err_st;
-            }
         }
     }
 
@@ -261,91 +192,71 @@ Status TabletSinkSender::open_wait() {
 Status TabletSinkSender::try_close(RuntimeState* state) {
     Status err_st = Status::OK();
     bool intolerable_failure = false;
-    if (_colocate_mv_index) {
-        for_each_node_channel([this, &err_st, &intolerable_failure](NodeChannel* ch) {
-            if (!this->_is_failed_channel(ch)) {
-                auto st = ch->try_close();
-                if (!st.ok()) {
-                    LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
-                                 << ", load_info=" << ch->print_load_info() << ", error_msg=" << st.get_error_msg();
-                    err_st = st;
-                    this->_mark_as_failed(ch);
-                }
-            }
-            if (this->_has_intolerable_failure()) {
-                intolerable_failure = true;
-            }
-        });
-    } else {
-        for (auto& index_channel : _channels) {
-            if (index_channel->has_incremental_node_channel()) {
-                // close initial node channel and wait it done
-                index_channel->for_each_initial_node_channel(
-                        [&index_channel, &err_st, &intolerable_failure](NodeChannel* ch) {
-                            if (!index_channel->is_failed_channel(ch)) {
-                                auto st = ch->try_close(true);
-                                if (!st.ok()) {
-                                    LOG(WARNING) << "close initial channel failed. channel_name=" << ch->name()
-                                                 << ", load_info=" << ch->print_load_info()
-                                                 << ", error_msg=" << st.get_error_msg();
-                                    err_st = st;
-                                    index_channel->mark_as_failed(ch);
-                                }
-                            }
-                            if (index_channel->has_intolerable_failure()) {
-                                intolerable_failure = true;
-                            }
-                        });
-
-                if (intolerable_failure) {
-                    break;
-                }
-
-                bool is_initial_node_channel_close_done = true;
-                index_channel->for_each_initial_node_channel([&is_initial_node_channel_close_done](NodeChannel* ch) {
-                    is_initial_node_channel_close_done &= ch->is_close_done();
-                });
-
-                // close initial node channel not finish, can not close incremental node channel
-                if (!is_initial_node_channel_close_done) {
-                    break;
-                }
-
-                // close incremental node channel
-                index_channel->for_each_incremental_node_channel(
-                        [&index_channel, &err_st, &intolerable_failure](NodeChannel* ch) {
-                            if (!index_channel->is_failed_channel(ch)) {
-                                auto st = ch->try_close();
-                                if (!st.ok()) {
-                                    LOG(WARNING) << "close incremental channel failed. channel_name=" << ch->name()
-                                                 << ", load_info=" << ch->print_load_info()
-                                                 << ", error_msg=" << st.get_error_msg();
-                                    err_st = st;
-                                    index_channel->mark_as_failed(ch);
-                                }
-                            }
-                            if (index_channel->has_intolerable_failure()) {
-                                intolerable_failure = true;
-                            }
-                        });
-
-            } else {
-                index_channel->for_each_node_channel([&index_channel, &err_st, &intolerable_failure](NodeChannel* ch) {
-                    if (!index_channel->is_failed_channel(ch)) {
-                        auto st = ch->try_close();
-                        if (!st.ok()) {
-                            LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
-                                         << ", load_info=" << ch->print_load_info()
-                                         << ", error_msg=" << st.get_error_msg();
-                            err_st = st;
-                            index_channel->mark_as_failed(ch);
-                        }
+    for (auto& index_channel : _channels) {
+        if (index_channel->has_incremental_node_channel()) {
+            // close initial node channel and wait it done
+            index_channel->for_each_initial_node_channel([&index_channel, &err_st,
+                                                          &intolerable_failure](NodeChannel* ch) {
+                if (!index_channel->is_failed_channel(ch)) {
+                    auto st = ch->try_close(true);
+                    if (!st.ok()) {
+                        LOG(WARNING) << "close initial channel failed. channel_name=" << ch->name()
+                                     << ", load_info=" << ch->print_load_info() << ", error_msg=" << st.get_error_msg();
+                        err_st = st;
+                        index_channel->mark_as_failed(ch);
                     }
-                    if (index_channel->has_intolerable_failure()) {
-                        intolerable_failure = true;
-                    }
-                });
+                }
+                if (index_channel->has_intolerable_failure()) {
+                    intolerable_failure = true;
+                }
+            });
+
+            if (intolerable_failure) {
+                break;
             }
+
+            bool is_initial_node_channel_close_done = true;
+            index_channel->for_each_initial_node_channel([&is_initial_node_channel_close_done](NodeChannel* ch) {
+                is_initial_node_channel_close_done &= ch->is_close_done();
+            });
+
+            // close initial node channel not finish, can not close incremental node channel
+            if (!is_initial_node_channel_close_done) {
+                break;
+            }
+
+            // close incremental node channel
+            index_channel->for_each_incremental_node_channel([&index_channel, &err_st,
+                                                              &intolerable_failure](NodeChannel* ch) {
+                if (!index_channel->is_failed_channel(ch)) {
+                    auto st = ch->try_close();
+                    if (!st.ok()) {
+                        LOG(WARNING) << "close incremental channel failed. channel_name=" << ch->name()
+                                     << ", load_info=" << ch->print_load_info() << ", error_msg=" << st.get_error_msg();
+                        err_st = st;
+                        index_channel->mark_as_failed(ch);
+                    }
+                }
+                if (index_channel->has_intolerable_failure()) {
+                    intolerable_failure = true;
+                }
+            });
+
+        } else {
+            index_channel->for_each_node_channel([&index_channel, &err_st, &intolerable_failure](NodeChannel* ch) {
+                if (!index_channel->is_failed_channel(ch)) {
+                    auto st = ch->try_close();
+                    if (!st.ok()) {
+                        LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
+                                     << ", load_info=" << ch->print_load_info() << ", error_msg=" << st.get_error_msg();
+                        err_st = st;
+                        index_channel->mark_as_failed(ch);
+                    }
+                }
+                if (index_channel->has_intolerable_failure()) {
+                    intolerable_failure = true;
+                }
+            });
         }
     }
 
@@ -359,11 +270,7 @@ Status TabletSinkSender::try_close(RuntimeState* state) {
 bool TabletSinkSender::is_close_done() {
     if (!_close_done) {
         bool close_done = true;
-        if (_colocate_mv_index) {
-            for_each_node_channel([&close_done](NodeChannel* ch) { close_done &= ch->is_close_done(); });
-        } else {
-            for_each_index_channel([&close_done](NodeChannel* ch) { close_done &= ch->is_close_done(); });
-        }
+        for_each_index_channel([&close_done](NodeChannel* ch) { close_done &= ch->is_close_done(); });
         _close_done = close_done;
     }
 
@@ -382,43 +289,23 @@ Status TabletSinkSender::close_wait(RuntimeState* state, Status close_status, Ru
         {
             SCOPED_TIMER(close_timer);
             Status err_st = Status::OK();
-
-            if (_colocate_mv_index) {
-                for_each_node_channel([this, &state, &node_add_batch_counter_map, &serialize_batch_ns,
-                                       &actual_consume_ns, &err_st](NodeChannel* ch) {
+            for (auto& index_channel : _channels) {
+                index_channel->for_each_node_channel([&index_channel, &state, &node_add_batch_counter_map,
+                                                      &serialize_batch_ns, &actual_consume_ns,
+                                                      &err_st](NodeChannel* ch) {
                     auto channel_status = ch->close_wait(state);
                     if (!channel_status.ok()) {
                         LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
                                      << ", load_info=" << ch->print_load_info()
                                      << ", error_msg=" << channel_status.get_error_msg();
                         err_st = channel_status;
-                        this->_mark_as_failed(ch);
+                        index_channel->mark_as_failed(ch);
                     }
                     ch->time_report(&node_add_batch_counter_map, &serialize_batch_ns, &actual_consume_ns);
                 });
-                if (_has_intolerable_failure()) {
+                if (index_channel->has_intolerable_failure()) {
                     status = err_st;
-                    for_each_node_channel([&status](NodeChannel* ch) { ch->cancel(status); });
-                }
-            } else {
-                for (auto& index_channel : _channels) {
-                    index_channel->for_each_node_channel([&index_channel, &state, &node_add_batch_counter_map,
-                                                          &serialize_batch_ns, &actual_consume_ns,
-                                                          &err_st](NodeChannel* ch) {
-                        auto channel_status = ch->close_wait(state);
-                        if (!channel_status.ok()) {
-                            LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
-                                         << ", load_info=" << ch->print_load_info()
-                                         << ", error_msg=" << channel_status.get_error_msg();
-                            err_st = channel_status;
-                            index_channel->mark_as_failed(ch);
-                        }
-                        ch->time_report(&node_add_batch_counter_map, &serialize_batch_ns, &actual_consume_ns);
-                    });
-                    if (index_channel->has_intolerable_failure()) {
-                        status = err_st;
-                        index_channel->for_each_node_channel([&status](NodeChannel* ch) { ch->cancel(status); });
-                    }
+                    index_channel->for_each_node_channel([&status](NodeChannel* ch) { ch->cancel(status); });
                 }
             }
         }
@@ -441,11 +328,7 @@ Status TabletSinkSender::close_wait(RuntimeState* state, Status close_status, Ru
         server_wait_flush_timer->update(total_server_wait_memtable_flush_time_us * 1000);
         LOG(INFO) << ss.str();
     } else {
-        if (_colocate_mv_index) {
-            for_each_node_channel([&status](NodeChannel* ch) { ch->cancel(status); });
-        } else {
-            for_each_index_channel([&status](NodeChannel* ch) { ch->cancel(status); });
-        }
+        for_each_index_channel([&status](NodeChannel* ch) { ch->cancel(status); });
     }
 
     Expr::close(_output_expr_ctxs, state);

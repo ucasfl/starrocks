@@ -50,6 +50,7 @@
 #include "config.h"
 #include "exec/pipeline/query_context.h"
 #include "exec/pipeline/stream_epoch_manager.h"
+#include "exec/tablet_sink_colocate_sender.h"
 #include "exprs/expr.h"
 #include "gutil/strings/fastmem.h"
 #include "gutil/strings/join.h"
@@ -242,9 +243,18 @@ Status OlapTableSink::prepare(RuntimeState* state) {
     for (auto& it : _node_channels) {
         node_channels[it.first] = it.second.get();
     }
-    _tablet_sink_sender = std::make_unique<TabletSinkSender>(
-            _load_id, _txn_id, _location, _vectorized_partition, std::move(index_channels), std::move(node_channels),
-            _output_expr_ctxs, _colocate_mv_index, _enable_replicated_storage, _write_quorum_type, _num_repicas);
+    if (_colocate_mv_index) {
+        _tablet_sink_sender = std::make_unique<TabletSinkColocateSender>(
+                _load_id, _txn_id, _location, _vectorized_partition, std::move(index_channels),
+                std::move(node_channels), _output_expr_ctxs, _enable_replicated_storage, _write_quorum_type,
+                _num_repicas);
+
+    } else {
+        _tablet_sink_sender = std::make_unique<TabletSinkSender>(_load_id, _txn_id, _location, _vectorized_partition,
+                                                                 std::move(index_channels), std::move(node_channels),
+                                                                 _output_expr_ctxs, _enable_replicated_storage,
+                                                                 _write_quorum_type, _num_repicas);
+    }
     return Status::OK();
 }
 
