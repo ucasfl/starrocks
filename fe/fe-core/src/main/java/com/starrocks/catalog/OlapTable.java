@@ -1375,6 +1375,22 @@ public class OlapTable extends Table {
         return Math.abs((int) adler32.getValue());
     }
 
+    @Override
+    public List<Long> getTrxTableIds() {
+        List<Long> trxTableIds = Lists.newArrayList(id);
+        for (MaterializedIndexMeta indexMeta : indexIdToMeta.values()) {
+            if (indexMeta.getTargetTableId() != 0 && indexMeta.getTargetTableId() != id) {
+                trxTableIds.add(indexMeta.getTargetTableId());
+            }
+        }
+        return trxTableIds;
+    }
+
+    public boolean containLogicalMaterializedViews() {
+        return indexIdToMeta.values().stream()
+                .anyMatch(x -> x.getMetaIndexType() == MaterializedIndexMeta.MetaIndexType.LOGICAL);
+    }
+
     // get intersect partition names with the given table "anotherTbl". not including temp partitions
     public Status getIntersectPartNamesWith(OlapTable anotherTbl, List<String> intersectPartNames) {
         if (this.getPartitionInfo().getType() != anotherTbl.getPartitionInfo().getType()) {

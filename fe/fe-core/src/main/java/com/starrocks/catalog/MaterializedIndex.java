@@ -61,7 +61,8 @@ public class MaterializedIndex extends MetaObject implements Writable, GsonPostP
         ROLLUP,
         @Deprecated
         SCHEMA_CHANGE,
-        SHADOW; // index in SHADOW state is visible to load process, but invisible to query
+        SHADOW,
+        LOGICAL; // index in SHADOW state is visible to load process, but invisible to query
 
         public boolean isVisible() {
             return this == IndexState.NORMAL || this == IndexState.SCHEMA_CHANGE;
@@ -93,7 +94,8 @@ public class MaterializedIndex extends MetaObject implements Writable, GsonPostP
     public enum IndexExtState {
         ALL,
         VISIBLE, // index state in NORMAL and SCHEMA_CHANGE
-        SHADOW // index state in SHADOW
+        SHADOW, // index state in SHADOW
+        LOGICAL // `LOGICAL` means it's a reference to another Partition
     }
 
     @SerializedName(value = "id")
@@ -107,6 +109,10 @@ public class MaterializedIndex extends MetaObject implements Writable, GsonPostP
     @SerializedName(value = "tablets")
     // this is for keeping tablet order
     private List<Tablet> tablets;
+    @SerializedName(value = "targetTableId")
+    private long targetTableId;
+    @SerializedName(value = "targetPartitionId")
+    private long targetPartitionId;
 
     // If this is an index of LakeTable and the index state is SHADOW, all transactions
     // whose txn id is less than 'visibleTxnId' will ignore this index when sending
@@ -200,6 +206,26 @@ public class MaterializedIndex extends MetaObject implements Writable, GsonPostP
         if (updateInvertedIndex) {
             GlobalStateMgr.getCurrentInvertedIndex().addTablet(tablet.getId(), tabletMeta);
         }
+    }
+
+    public boolean isLogicalIndex() {
+        return targetTableId != 0;
+    }
+
+    public long getTargetTableId() {
+        return targetTableId;
+    }
+
+    public void setTargetTableId(long targetTableId) {
+        this.targetTableId = targetTableId;
+    }
+
+    public long getTargetPartitionId() {
+        return targetPartitionId;
+    }
+
+    public void setTargetPartitionId(long targetPartitionId) {
+        this.targetPartitionId = targetPartitionId;
     }
 
     public void setIdForRestore(long idxId) {

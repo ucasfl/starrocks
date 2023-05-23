@@ -100,6 +100,9 @@ public class MetadataViewer {
                 short replicationNum = olapTable.getPartitionInfo().getReplicationNum(partition.getId());
 
                 for (MaterializedIndex index : partition.getMaterializedIndices(IndexExtState.VISIBLE)) {
+                    if (index.isLogicalIndex()) {
+                        continue;
+                    }
                     int schemaHash = olapTable.getSchemaHashByIndexId(index.getId());
                     for (Tablet tablet : index.getTablets()) {
                         long tabletId = tablet.getId();
