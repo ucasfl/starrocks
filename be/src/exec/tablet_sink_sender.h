@@ -53,7 +53,6 @@
 #include "gen_cpp/doris_internal_service.pb.h"
 #include "gen_cpp/internal_service.pb.h"
 #include "runtime/mem_tracker.h"
-#include "util/bitmap.h"
 #include "util/compression/block_compression.h"
 #include "util/raw_container.h"
 #include "util/ref_count_closure.h"
@@ -62,7 +61,6 @@
 
 namespace starrocks {
 
-class Bitmap;
 class MemTracker;
 class RuntimeProfile;
 class RowDescriptor;
@@ -74,13 +72,23 @@ namespace stream_load {
 // TabletSinkSender will control one index/table's send chunks.
 class TabletSinkSender {
 public:
-    TabletSinkSender(OlapTableLocationParam* location, OlapTablePartitionParam* vectorized_partition,
-                     std::vector<IndexChannel*> channels, bool colocate_mv_index, bool enable_replicated_storage)
-            : _location(location),
+    TabletSinkSender( // unique load id
+            PUniqueId load_id, int64_t txn_id, OlapTableLocationParam* location,
+            OlapTablePartitionParam* vectorized_partition, std::vector<IndexChannel*> channels,
+            std::unordered_map<int64_t, NodeChannel*> node_channels, std::vector<ExprContext*> output_expr_ctxs,
+            bool colocate_mv_index, bool enable_replicated_storage, TWriteQuorumType::type write_quorum_type,
+            int num_repicas)
+            : _load_id(load_id),
+              _txn_id(txn_id),
+              _location(location),
               _vectorized_partition(vectorized_partition),
               _channels(std::move(channels)),
+              _node_channels(std::move(node_channels)),
+              _output_expr_ctxs(std::move(output_expr_ctxs)),
               _colocate_mv_index(colocate_mv_index),
-              _enable_replicated_storage(enable_replicated_storage) {}
+              _enable_replicated_storage(enable_replicated_storage),
+              _write_quorum_type(write_quorum_type),
+              _num_repicas(num_repicas) {}
     ~TabletSinkSender() = default;
 
 public:
@@ -99,6 +107,9 @@ public:
     // if is_close_done() return true, close_wait() will not block
     // otherwise close_wait() will block
     Status try_close(RuntimeState* state);
+    Status close_wait(RuntimeState* state, Status close_status, RuntimeProfile::Counter* close_timer,
+                      RuntimeProfile::Counter* serialize_chunk_timer, RuntimeProfile::Counter* send_rpc_timer,
+                      RuntimeProfile::Counter* server_rpc_timer, RuntimeProfile::Counter* server_wait_flush_timer);
 
     bool is_open_done();
     bool is_full();
@@ -106,7 +117,7 @@ public:
 
     void for_each_node_channel(const std::function<void(NodeChannel*)>& func) {
         for (auto& it : _node_channels) {
-            func(it.second.get());
+            func(it.second);
         }
     }
 
@@ -139,23 +150,23 @@ private:
     }
 
 private:
+    // unique load id
+    PUniqueId _load_id;
+    int64_t _txn_id = -1;
     OlapTableLocationParam* _location = nullptr;
     // partition schema
     OlapTablePartitionParam* _vectorized_partition = nullptr;
     // index_channel
     std::vector<IndexChannel*> _channels;
+    std::unordered_map<int64_t, NodeChannel*> _node_channels;
+    std::vector<ExprContext*> _output_expr_ctxs;
     bool _colocate_mv_index{false};
     bool _enable_replicated_storage{false};
-    std::vector<ExprContext*> _output_expr_ctxs;
-
-    // unique load id
-    PUniqueId _load_id;
-    bool _open_done = false;
-    bool _close_done = false;
     TWriteQuorumType::type _write_quorum_type = TWriteQuorumType::MAJORITY;
-    std::unordered_map<int64_t, std::unique_ptr<NodeChannel>> _node_channels;
     int _num_repicas = -1;
 
+    bool _open_done = false;
+    bool _close_done = false;
     // one chunk selection for BE node
     std::vector<uint32_t> _node_select_idx;
     std::vector<int64_t> _tablet_ids;

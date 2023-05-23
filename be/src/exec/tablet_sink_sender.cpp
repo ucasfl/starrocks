@@ -370,4 +370,89 @@ bool TabletSinkSender::is_close_done() {
     return _close_done;
 }
 
+Status TabletSinkSender::close_wait(RuntimeState* state, Status close_status, RuntimeProfile::Counter* close_timer,
+                                    RuntimeProfile::Counter* serialize_chunk_timer,
+                                    RuntimeProfile::Counter* send_rpc_timer, RuntimeProfile::Counter* server_rpc_timer,
+                                    RuntimeProfile::Counter* server_wait_flush_timer) {
+    Status status = std::move(close_status);
+    if (status.ok()) {
+        // BE id -> add_batch method counter
+        std::unordered_map<int64_t, AddBatchCounter> node_add_batch_counter_map;
+        int64_t serialize_batch_ns = 0, actual_consume_ns = 0;
+        {
+            SCOPED_TIMER(close_timer);
+            Status err_st = Status::OK();
+
+            if (_colocate_mv_index) {
+                for_each_node_channel([this, &state, &node_add_batch_counter_map, &serialize_batch_ns,
+                                       &actual_consume_ns, &err_st](NodeChannel* ch) {
+                    auto channel_status = ch->close_wait(state);
+                    if (!channel_status.ok()) {
+                        LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
+                                     << ", load_info=" << ch->print_load_info()
+                                     << ", error_msg=" << channel_status.get_error_msg();
+                        err_st = channel_status;
+                        this->_mark_as_failed(ch);
+                    }
+                    ch->time_report(&node_add_batch_counter_map, &serialize_batch_ns, &actual_consume_ns);
+                });
+                if (_has_intolerable_failure()) {
+                    status = err_st;
+                    for_each_node_channel([&status](NodeChannel* ch) { ch->cancel(status); });
+                }
+            } else {
+                for (auto& index_channel : _channels) {
+                    index_channel->for_each_node_channel([&index_channel, &state, &node_add_batch_counter_map,
+                                                          &serialize_batch_ns, &actual_consume_ns,
+                                                          &err_st](NodeChannel* ch) {
+                        auto channel_status = ch->close_wait(state);
+                        if (!channel_status.ok()) {
+                            LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
+                                         << ", load_info=" << ch->print_load_info()
+                                         << ", error_msg=" << channel_status.get_error_msg();
+                            err_st = channel_status;
+                            index_channel->mark_as_failed(ch);
+                        }
+                        ch->time_report(&node_add_batch_counter_map, &serialize_batch_ns, &actual_consume_ns);
+                    });
+                    if (index_channel->has_intolerable_failure()) {
+                        status = err_st;
+                        index_channel->for_each_node_channel([&status](NodeChannel* ch) { ch->cancel(status); });
+                    }
+                }
+            }
+        }
+        COUNTER_SET(serialize_chunk_timer, serialize_batch_ns);
+        COUNTER_SET(send_rpc_timer, actual_consume_ns);
+
+        int64_t total_server_rpc_time_us = 0;
+        int64_t total_server_wait_memtable_flush_time_us = 0;
+        // print log of add batch time of all node, for tracing load performance easily
+        std::stringstream ss;
+        ss << "Olap table sink statistics. load_id: " << print_id(_load_id) << ", txn_id: " << _txn_id
+           << ", add chunk time(ms)/wait lock time(ms)/num: ";
+        for (auto const& pair : node_add_batch_counter_map) {
+            total_server_rpc_time_us += pair.second.add_batch_execution_time_us;
+            total_server_wait_memtable_flush_time_us += pair.second.add_batch_wait_memtable_flush_time_us;
+            ss << "{" << pair.first << ":(" << (pair.second.add_batch_execution_time_us / 1000) << ")("
+               << (pair.second.add_batch_wait_lock_time_us / 1000) << ")(" << pair.second.add_batch_num << ")} ";
+        }
+        server_rpc_timer->update(total_server_rpc_time_us * 1000);
+        server_wait_flush_timer->update(total_server_wait_memtable_flush_time_us * 1000);
+        LOG(INFO) << ss.str();
+    } else {
+        if (_colocate_mv_index) {
+            for_each_node_channel([&status](NodeChannel* ch) { ch->cancel(status); });
+        } else {
+            for_each_index_channel([&status](NodeChannel* ch) { ch->cancel(status); });
+        }
+    }
+
+    Expr::close(_output_expr_ctxs, state);
+    if (_vectorized_partition) {
+        _vectorized_partition->close(state);
+    }
+    return status;
+}
+
 } // namespace starrocks::stream_load

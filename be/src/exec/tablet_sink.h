@@ -269,9 +269,6 @@ private:
     // the timeout of load channels opened by this tablet sink. in second
     int64_t _load_channel_timeout_s = 0;
 
-    bool _open_done = false;
-    bool _close_done = false;
-
     // BeId -> channel
     std::unordered_map<int64_t, std::unique_ptr<NodeChannel>> _node_channels;
     // BeId

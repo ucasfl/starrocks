@@ -232,12 +232,24 @@ Status OlapTableSink::prepare(RuntimeState* state) {
     _load_mem_limit = state->get_load_mem_limit();
 
     // open all channels
-    return _init_node_channels(state);
+    RETURN_IF_ERROR(_init_node_channels(state));
+
+    std::vector<IndexChannel*> index_channels;
+    for (const auto& channel : _channels) {
+        index_channels.emplace_back(channel.get());
+    }
+    std::unordered_map<int64_t, NodeChannel*> node_channels;
+    for (auto& it : _node_channels) {
+        node_channels[it.first] = it.second.get();
+    }
+    _tablet_sink_sender = std::make_unique<TabletSinkSender>(
+            _load_id, _txn_id, _location, _vectorized_partition, std::move(index_channels), std::move(node_channels),
+            _output_expr_ctxs, _colocate_mv_index, _enable_replicated_storage, _write_quorum_type, _num_repicas);
+    return Status::OK();
 }
 
 Status OlapTableSink::_init_node_channels(RuntimeState* state) {
     const auto& partitions = _vectorized_partition->get_partitions();
-    std::vector<IndexChannel*> index_channels;
     for (int i = 0; i < _schema->indexes().size(); ++i) {
         // collect all tablets belong to this rollup
         std::vector<PTabletWithPartition> tablets;
@@ -289,7 +301,6 @@ Status OlapTableSink::_init_node_channels(RuntimeState* state) {
         }
         auto channel = std::make_unique<IndexChannel>(this, index->index_id);
         RETURN_IF_ERROR(channel->init(state, tablets, false));
-        index_channels.emplace_back(channel.get());
         _channels.emplace_back(std::move(channel));
     }
     if (_colocate_mv_index) {
@@ -297,8 +308,6 @@ Status OlapTableSink::_init_node_channels(RuntimeState* state) {
             RETURN_IF_ERROR(it.second->init(state));
         }
     }
-    _tablet_sink_sender = std::make_unique<TabletSinkSender>(_location, _vectorized_partition, index_channels,
-                                                             _colocate_mv_index, _enable_replicated_storage);
     return Status::OK();
 }
 
@@ -663,93 +672,21 @@ Status OlapTableSink::close_wait(RuntimeState* state, Status close_status) {
         // only if status is ok can we call this _profile->total_time_counter().
         // if status is not ok, this sink may not be prepared, so that _profile is null
         SCOPED_TIMER(_profile->total_time_counter());
-        // BE id -> add_batch method counter
-        std::unordered_map<int64_t, AddBatchCounter> node_add_batch_counter_map;
-        int64_t serialize_batch_ns = 0, actual_consume_ns = 0;
-        {
-            SCOPED_TIMER(_close_timer);
-            Status err_st = Status::OK();
-
-            if (_colocate_mv_index) {
-                for_each_node_channel([this, &state, &node_add_batch_counter_map, &serialize_batch_ns,
-                                       &actual_consume_ns, &err_st](NodeChannel* ch) {
-                    auto channel_status = ch->close_wait(state);
-                    if (!channel_status.ok()) {
-                        LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
-                                     << ", load_info=" << ch->print_load_info()
-                                     << ", error_msg=" << channel_status.get_error_msg();
-                        err_st = channel_status;
-                        this->mark_as_failed(ch);
-                    }
-                    ch->time_report(&node_add_batch_counter_map, &serialize_batch_ns, &actual_consume_ns);
-                });
-                if (has_intolerable_failure()) {
-                    status = err_st;
-                    for_each_node_channel([&status](NodeChannel* ch) { ch->cancel(status); });
-                }
-            } else {
-                for (auto& index_channel : _channels) {
-                    index_channel->for_each_node_channel([&index_channel, &state, &node_add_batch_counter_map,
-                                                          &serialize_batch_ns, &actual_consume_ns,
-                                                          &err_st](NodeChannel* ch) {
-                        auto channel_status = ch->close_wait(state);
-                        if (!channel_status.ok()) {
-                            LOG(WARNING) << "close channel failed. channel_name=" << ch->name()
-                                         << ", load_info=" << ch->print_load_info()
-                                         << ", error_msg=" << channel_status.get_error_msg();
-                            err_st = channel_status;
-                            index_channel->mark_as_failed(ch);
-                        }
-                        ch->time_report(&node_add_batch_counter_map, &serialize_batch_ns, &actual_consume_ns);
-                    });
-                    if (index_channel->has_intolerable_failure()) {
-                        status = err_st;
-                        index_channel->for_each_node_channel([&status](NodeChannel* ch) { ch->cancel(status); });
-                    }
-                }
-            }
-        }
         COUNTER_SET(_input_rows_counter, _number_input_rows);
         COUNTER_SET(_output_rows_counter, _number_output_rows);
         COUNTER_SET(_filtered_rows_counter, _number_filtered_rows);
         COUNTER_SET(_convert_chunk_timer, _convert_batch_ns);
         COUNTER_SET(_validate_data_timer, _validate_data_ns);
-        COUNTER_SET(_serialize_chunk_timer, serialize_batch_ns);
-        COUNTER_SET(_send_rpc_timer, actual_consume_ns);
 
-        int64_t total_server_rpc_time_us = 0;
-        int64_t total_server_wait_memtable_flush_time_us = 0;
-        // print log of add batch time of all node, for tracing load performance easily
-        std::stringstream ss;
-        ss << "Olap table sink statistics. load_id: " << print_id(_load_id) << ", txn_id: " << _txn_id
-           << ", add chunk time(ms)/wait lock time(ms)/num: ";
-        for (auto const& pair : node_add_batch_counter_map) {
-            total_server_rpc_time_us += pair.second.add_batch_execution_time_us;
-            total_server_wait_memtable_flush_time_us += pair.second.add_batch_wait_memtable_flush_time_us;
-            ss << "{" << pair.first << ":(" << (pair.second.add_batch_execution_time_us / 1000) << ")("
-               << (pair.second.add_batch_wait_lock_time_us / 1000) << ")(" << pair.second.add_batch_num << ")} ";
-        }
-        _server_rpc_timer->update(total_server_rpc_time_us * 1000);
-        _server_wait_flush_timer->update(total_server_wait_memtable_flush_time_us * 1000);
-        LOG(INFO) << ss.str();
     } else {
         COUNTER_SET(_input_rows_counter, _number_input_rows);
         COUNTER_SET(_output_rows_counter, _number_output_rows);
         COUNTER_SET(_filtered_rows_counter, _number_filtered_rows);
         COUNTER_SET(_convert_chunk_timer, _convert_batch_ns);
         COUNTER_SET(_validate_data_timer, _validate_data_ns);
-
-        if (_colocate_mv_index) {
-            for_each_node_channel([&status](NodeChannel* ch) { ch->cancel(status); });
-        } else {
-            for_each_index_channel([&status](NodeChannel* ch) { ch->cancel(status); });
-        }
     }
-
-    Expr::close(_output_expr_ctxs, state);
-    if (_vectorized_partition) {
-        _vectorized_partition->close(state);
-    }
+    status = _tablet_sink_sender->close_wait(state, status, _close_timer, _serialize_chunk_timer, _send_rpc_timer,
+                                             _server_rpc_timer, _server_wait_flush_timer);
     if (!status.ok()) {
         _span->SetStatus(trace::StatusCode::kError, status.get_error_msg());
     }
