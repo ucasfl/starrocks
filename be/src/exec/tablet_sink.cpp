@@ -51,6 +51,7 @@
 #include "exec/pipeline/query_context.h"
 #include "exec/pipeline/stream_epoch_manager.h"
 #include "exec/tablet_sink_colocate_sender.h"
+#include "exec/tablet_sink_multi_sender.h"
 #include "exprs/expr.h"
 #include "gutil/strings/fastmem.h"
 #include "gutil/strings/join.h"
@@ -250,10 +251,17 @@ Status OlapTableSink::prepare(RuntimeState* state) {
                 _num_repicas);
 
     } else {
-        _tablet_sink_sender = std::make_unique<TabletSinkSender>(_load_id, _txn_id, _location, _vectorized_partition,
-                                                                 std::move(index_channels), std::move(node_channels),
-                                                                 _output_expr_ctxs, _enable_replicated_storage,
-                                                                 _write_quorum_type, _num_repicas);
+        if (_vectorized_partition->enable_associated_tables()) {
+            _tablet_sink_sender = std::make_unique<TabletSinkMultiSender>(
+                    _load_id, _txn_id, _location, _vectorized_partition, std::move(index_channels),
+                    std::move(node_channels), _output_expr_ctxs, _enable_replicated_storage, _write_quorum_type,
+                    _num_repicas);
+        } else {
+            _tablet_sink_sender = std::make_unique<TabletSinkSender>(
+                    _load_id, _txn_id, _location, _vectorized_partition, std::move(index_channels),
+                    std::move(node_channels), _output_expr_ctxs, _enable_replicated_storage, _write_quorum_type,
+                    _num_repicas);
+        }
     }
     return Status::OK();
 }
@@ -268,7 +276,7 @@ Status OlapTableSink::_init_node_channels(RuntimeState* state) {
             for (auto tablet : part->indexes[i].tablets) {
                 PTabletWithPartition tablet_info;
                 tablet_info.set_tablet_id(tablet);
-                tablet_info.set_partition_id(part->id);
+                tablet_info.set_partition_id(part->partition_id(i));
 
                 // setup replicas
                 auto* location = _location->find_tablet(tablet);
@@ -389,6 +397,7 @@ Status OlapTableSink::_incremental_open_node_channel(const std::vector<TOlapTabl
             for (auto tablet : index.tablets) {
                 PTabletWithPartition tablet_info;
                 tablet_info.set_tablet_id(tablet);
+                // TODO: support logical materialized views;
                 tablet_info.set_partition_id(t_part.id);
 
                 auto* location = _location->find_tablet(tablet);

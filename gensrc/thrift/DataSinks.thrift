@@ -173,12 +173,6 @@ struct TExportSink {
     30: optional string file_name_prefix
 }
 
-struct TAssociatedTable {
-    1: required Descriptors.TOlapTableSchemaParam associated_schema
-    2: optional Descriptors.TOlapTablePartitionParam associated_partition
-    3: optional Descriptors.TOlapTableLocationParam associated_locatioin
-}
-
 struct TOlapTableSink {
     1: required Types.TUniqueId load_id
     2: required i64 txn_id
@@ -206,7 +200,6 @@ struct TOlapTableSink {
     24: optional i32 auto_increment_slot_id
     25: optional Types.TPartialUpdateMode partial_update_mode
     26: optional string label
-    27: optional list<TAssociatedTable> associated_tables
 }
 
 struct TSchemaTableSink {

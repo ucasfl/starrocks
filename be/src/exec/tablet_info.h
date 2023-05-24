@@ -168,6 +168,13 @@ struct OlapTablePartition {
     int64_t num_buckets = 0;
     std::vector<OlapTableIndexTablets> indexes;
     std::vector<int64_t> associated_partition_ids;
+    int64_t partition_id(int32_t idx) {
+        if (associated_partition_ids.size() > 0) {
+            return associated_partition_ids[idx];
+        } else {
+            return id;
+        }
+    }
 };
 
 struct PartionKeyComparator {
@@ -209,6 +216,7 @@ public:
     int64_t version() const { return _t_param.version; }
 
     bool enable_automatic_partition() const { return _t_param.enable_automatic_partition; }
+    bool enable_associated_tables() const { return _t_param.enable_associated_tables; }
 
     // `invalid_row_index` stores index that chunk[index]
     // has been filtered out for not being able to find tablet.

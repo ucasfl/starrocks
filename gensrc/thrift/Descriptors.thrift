@@ -224,11 +224,8 @@ struct TOlapTablePartition {
     // for automatic partition
     9: optional bool is_shadow_partition = false
     
-    // for logical sync materialized view
-    10: optional i64 index_id
-    
     // associated_partition_ids
-    11: optional list<i64> associated_partition_ids
+    10: optional list<i64> associated_partition_ids
 }
 
 struct TOlapTablePartitionParam {
@@ -250,6 +247,9 @@ struct TOlapTablePartitionParam {
     8: optional list<Exprs.TExpr> partition_exprs
 
     9: optional bool enable_automatic_partition
+    
+    // logical materialized view
+    10: optional bool enable_associated_tables
 }
 
 struct TOlapTableIndexSchema {
