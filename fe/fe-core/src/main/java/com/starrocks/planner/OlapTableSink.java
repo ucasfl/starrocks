@@ -449,7 +449,7 @@ public class OlapTableSink extends DataSink {
     }
 
     private void setIndexAndBucketNums(Partition partition, TOlapTablePartition tPartition, boolean hasAssociatedTables) {
-        for (MaterializedIndex index : partition.getMaterializedIndices(IndexExtState.ALL_AND_LOGICAL)) {
+        for (MaterializedIndex index : partition.getAllMaterializedIndices()) {
             tPartition.addToIndexes(new TOlapTableIndexTablets(index.getId(), Lists.newArrayList(
                     index.getTablets().stream().map(Tablet::getId).collect(Collectors.toList()))));
             tPartition.setNum_buckets(index.getTablets().size());
@@ -486,7 +486,7 @@ public class OlapTableSink extends DataSink {
         for (Long partitionId : partitionIds) {
             Partition partition = table.getPartition(partitionId);
             int quorum = table.getPartitionInfo().getQuorumNum(partition.getId(), table.writeQuorum());
-            for (MaterializedIndex index : partition.getMaterializedIndices(IndexExtState.ALL_AND_LOGICAL)) {
+            for (MaterializedIndex index : partition.getAllMaterializedIndices()) {
                 for (Tablet tablet : index.getTablets()) {
                     if (table.isCloudNativeTableOrMaterializedView()) {
                         Warehouse warehouse = GlobalStateMgr.getCurrentWarehouseMgr().getDefaultWarehouse();

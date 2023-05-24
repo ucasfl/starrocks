@@ -269,31 +269,8 @@ public class MaterializedViewHandler extends AlterHandler {
         try {
             for (Partition partition : baseTable.getPartitions()) {
                 String partName = partition.getName();
-                Partition targetPartition;
-                // Partitioned target table is not supported yet: need to maintain the changed mapping between
-                // the base table and the target table.
-                if (targetTable.getPartitions().size() > 1) {
-                    targetPartition = targetOlapTable.getPartition(partName);
-                    if (targetPartition == null) {
-                        // TODO:
-                        throw new DdlException("Target table has no partition name:" + partName);
-                    }
-                } else {
-                    targetPartition = targetTable.getPartitions().iterator().next();
-                }
-
-                MaterializedIndex rollupIndex = new MaterializedIndex(mvIndexId, IndexState.NORMAL);
-                TStorageMedium medium = targetOlapTable.getPartitionInfo()
-                        .getDataProperty(targetPartition.getId()).getStorageMedium();
-                TabletMeta mvTabletMeta = new TabletMeta(targetDBId, targetTableId,
-                        targetPartition.getId(), mvIndexId, mvSchemaHash, medium);
-                for (Tablet targetTablet : targetPartition.getBaseIndex().getTablets()) {
-                    rollupIndex.addTablet(targetTablet, mvTabletMeta);
-                }
-                rollupIndex.setTargetPartitionId(targetPartition.getId());
-                rollupIndex.setTargetTableId(targetTableId);
-                Preconditions.checkNotNull(rollupIndex);
-                partition.createRollupIndex(rollupIndex);
+                MaterializedIndex rollupIndex = new MaterializedIndex(mvIndexId, IndexState.LOGICAL);
+                partition.createLogicalRollupIndex(db, rollupIndex, targetTableId, partName);
             }
 
             // get short key column count
@@ -306,7 +283,7 @@ public class MaterializedViewHandler extends AlterHandler {
             mvIndexMeta.setTargetTableId(targetTableId);
             mvIndexMeta.setMetaIndexType(MaterializedIndexMeta.MetaIndexType.LOGICAL);
             baseTable.rebuildFullSchema();
-            baseTable.addColocateMaterializedView(stmt.getMVName());
+            // baseTable.addColocateMaterializedView(stmt.getMVName());
         } finally {
             db.writeUnlock();
         }
@@ -588,7 +565,8 @@ public class MaterializedViewHandler extends AlterHandler {
             //partitionOrDistributedColumnName.addAll(olapTable.getDistributionColumnNames());
             for (MVColumnItem mvColumnItem : mvColumnItemList) {
                 if (partitionOrDistributedColumnName.contains(mvColumnItem.getBaseColumnName().toLowerCase())
-                        && mvColumnItem.getAggregationType() != null) {
+                        && mvColumnItem.getAggregationType() != null &&
+                        mvColumnItem.getAggregationType() != AggregateType.NONE) {
                     throw new DdlException("The partition columns " + mvColumnItem.getBaseColumnName()
                             + " must be key column in mv");
                 }

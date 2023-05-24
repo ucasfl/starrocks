@@ -1677,6 +1677,11 @@ public class LocalMetastore implements ConnectorMetadata {
             MaterializedIndex index = entry.getValue();
             MaterializedIndexMeta indexMeta = table.getIndexIdToMeta().get(indexId);
 
+            if (indexMeta.isLogical()) {
+                partition.createLogicalRollupIndex(db, index, indexMeta.getTargetTableId(), partitionName);
+                continue;
+            }
+
             // create tablets
             TabletMeta tabletMeta =
                     new TabletMeta(db.getId(), table.getId(), partitionId, indexId, indexMeta.getSchemaHash(),
@@ -2112,6 +2117,9 @@ public class LocalMetastore implements ConnectorMetadata {
                                    Set<Long> tabletIdSet)
             throws DdlException {
         Preconditions.checkArgument(table.isCloudNativeTableOrMaterializedView());
+        if (index.isLogical()) {
+            return;
+        }
 
         DistributionInfo.DistributionInfoType distributionInfoType = distributionInfo.getType();
         if (distributionInfoType != DistributionInfo.DistributionInfoType.HASH) {
@@ -2136,6 +2144,9 @@ public class LocalMetastore implements ConnectorMetadata {
                                    DistributionInfo distributionInfo, long version, short replicationNum,
                                    TabletMeta tabletMeta, Set<Long> tabletIdSet) throws DdlException {
         Preconditions.checkArgument(replicationNum > 0);
+        if (index.isLogical()) {
+            return;
+        }
 
         DistributionInfo.DistributionInfoType distributionInfoType = distributionInfo.getType();
         if (distributionInfoType != DistributionInfo.DistributionInfoType.HASH

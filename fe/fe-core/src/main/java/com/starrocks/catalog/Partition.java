@@ -45,6 +45,7 @@ import com.starrocks.catalog.MaterializedIndex.IndexState;
 import com.starrocks.common.FeConstants;
 import com.starrocks.common.io.Text;
 import com.starrocks.common.io.Writable;
+import com.starrocks.thrift.TStorageMedium;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -230,6 +231,36 @@ public class Partition extends MetaObject implements Writable {
         return distributionInfo;
     }
 
+    public void createLogicalRollupIndex(Database db,
+                                         MaterializedIndex index,
+                                         long associatedTableId,
+                                         String partName) {
+        Preconditions.checkNotNull(index);
+        index.setState(MaterializedIndex.IndexState.LOGICAL);
+        OlapTable targetTable = (OlapTable) db.getTable(associatedTableId);
+        Preconditions.checkNotNull(targetTable);
+        Partition targetPartition;
+        if (targetTable.isPartitioned()) {
+            Preconditions.checkNotNull(partName);
+            targetPartition = targetTable.getPartition(partName);
+        } else {
+            targetPartition = targetTable.getPartitions().iterator().next();
+        }
+        Preconditions.checkNotNull(targetPartition);
+        long targetPartitionId = targetPartition.getId();
+        TStorageMedium medium = targetTable.getPartitionInfo()
+                .getDataProperty(targetPartition.getId()).getStorageMedium();
+        int schemaHash = targetTable.getSchemaHashByIndexId(targetTable.getBaseIndexId());
+        TabletMeta tabletMeta = new TabletMeta(db.getId(), targetTable.getId(),
+                        targetPartitionId, index.getId(), schemaHash, medium);
+        for (Tablet targetTablet : targetPartition.getBaseIndex().getTablets()) {
+            index.addTablet(targetTablet, tabletMeta);
+        }
+        index.setTargetPartitionId(targetPartition.getId());
+        index.setTargetTableId(associatedTableId);
+        this.idToLogicalIndex.put(index.getId(), index);
+    }
+
     public void createRollupIndex(MaterializedIndex mIndex) {
         if (mIndex.getState().isVisible()) {
             this.idToVisibleRollupIndex.put(mIndex.getId(), mIndex);
@@ -291,12 +322,6 @@ public class Partition extends MetaObject implements Writable {
                 indices.addAll(idToVisibleRollupIndex.values());
                 indices.addAll(idToShadowIndex.values());
                 break;
-            case ALL_AND_LOGICAL:
-                indices.add(baseIndex);
-                indices.addAll(idToVisibleRollupIndex.values());
-                indices.addAll(idToShadowIndex.values());
-                indices.addAll(idToLogicalIndex.values());
-                break;
             case VISIBLE:
                 indices.add(baseIndex);
                 indices.addAll(idToVisibleRollupIndex.values());
@@ -311,12 +336,27 @@ public class Partition extends MetaObject implements Writable {
         return indices;
     }
 
+    public List<MaterializedIndex> getAllMaterializedIndices() {
+        List<MaterializedIndex> indices = Lists.newArrayList();
+        indices.add(baseIndex);
+        indices.addAll(idToVisibleRollupIndex.values());
+        indices.addAll(idToShadowIndex.values());
+        indices.addAll(idToLogicalIndex.values());
+        return indices;
+    }
+
+    public List<MaterializedIndex> getAllVisibleMaterializedIndices() {
+        List<MaterializedIndex> indices = Lists.newArrayList();
+        indices.add(baseIndex);
+        indices.addAll(idToVisibleRollupIndex.values());
+        indices.addAll(idToLogicalIndex.values());
+        return indices;
+    }
+
     public int getMaterializedIndicesCount(IndexExtState extState) {
         switch (extState) {
             case ALL:
                 return 1 + idToVisibleRollupIndex.size() + idToShadowIndex.size();
-            case ALL_AND_LOGICAL:
-                return 1 + idToVisibleRollupIndex.size() + idToShadowIndex.size() + idToLogicalIndex.size();
             case VISIBLE:
                 return 1 + idToVisibleRollupIndex.size();
             case LOGICAL:

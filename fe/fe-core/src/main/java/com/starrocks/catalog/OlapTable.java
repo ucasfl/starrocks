@@ -561,7 +561,7 @@ public class OlapTable extends Table {
         Optional<Partition> firstPartition = idToPartition.values().stream().findFirst();
         if (firstPartition.isPresent()) {
             Partition partition = firstPartition.get();
-            return partition.getMaterializedIndices(IndexExtState.VISIBLE);
+            return partition.getAllVisibleMaterializedIndices();
         }
         return Lists.newArrayList();
     }
@@ -1383,16 +1383,16 @@ public class OlapTable extends Table {
         return associatedTableIds;
     }
 
-    // Return associated table_id to partition indexes mapping.
-    public Map<Long, List<MaterializedIndex>> getAssociatedTableIdToIndexes() {
-        Map<Long, List<MaterializedIndex>> tableIdToIndexes = Maps.newHashMap();
-        for (Partition partition : getPartitions()) {
-            for (MaterializedIndex index : partition.getMaterializedIndices(IndexExtState.ALL_AND_LOGICAL)) {
-                if (index.isLogical()) {
-                    tableIdToIndexes.computeIfAbsent(index.getTargetTableId(), x -> Lists.newArrayList()).add(index);
-                } else {
-                    tableIdToIndexes.computeIfAbsent(id, x -> Lists.newArrayList()).add(index);
-                }
+    // Return associated table_id to indexe ids mapping.
+    public Map<Long, List<Long>> getAssociatedTableIdToIndexes() {
+        Map<Long, List<Long>> tableIdToIndexes = Maps.newHashMap();
+        for (Map.Entry<Long, MaterializedIndexMeta> entry : indexIdToMeta.entrySet()) {
+            Long indexId = entry.getKey();
+            MaterializedIndexMeta indexMeta = entry.getValue();
+            if (indexMeta.isLogical()) {
+                tableIdToIndexes.computeIfAbsent(indexMeta.getTargetTableId(), x -> Lists.newArrayList()).add(indexId);
+            } else {
+                tableIdToIndexes.computeIfAbsent(id, x -> Lists.newArrayList()).add(indexId);
             }
         }
         return tableIdToIndexes;
@@ -1572,7 +1572,6 @@ public class OlapTable extends Table {
         }
 
         baseIndexId = in.readLong();
-
 
         // read indexes
         if (in.readBoolean()) {

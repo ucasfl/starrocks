@@ -97,7 +97,6 @@ public class MaterializedIndex extends MetaObject implements Writable, GsonPostP
 
     public enum IndexExtState {
         ALL,
-        ALL_AND_LOGICAL,
         VISIBLE, // index state in NORMAL and SCHEMA_CHANGE
         SHADOW, // index state in SHADOW
         LOGICAL // `LOGICAL` means it's a reference to another Partition

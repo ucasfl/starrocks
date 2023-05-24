@@ -81,7 +81,7 @@ public class MaterializedIndexMeta implements Writable, GsonPostProcessable {
     @SerializedName(value = "metaIndexType")
     private MetaIndexType metaIndexType = MetaIndexType.PHYSICAL;
     @SerializedName(value = "targetTableId")
-    private long targetTableId;
+    private long targetTableId = 0;
 
     public MaterializedIndexMeta(long indexId, List<Column> schema, int schemaVersion, int schemaHash,
                                  short shortKeyColumnCount, TStorageType storageType, KeysType keysType,

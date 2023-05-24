@@ -263,7 +263,7 @@ public class TransactionState implements Writable {
     // this map should be set when load execution begin, so that when the txn commit, it will know
     // which tables and rollups it loaded.
     // tbl id -> (index ids)
-    private final Map<Long, List<MaterializedIndex>> loadedTblIndexes = Maps.newHashMap();
+    private final Map<Long, Set<Long>> loadedTblIndexes = Maps.newHashMap();
 
     private String errorLogUrl = null;
 
@@ -619,7 +619,12 @@ public class TransactionState implements Writable {
      * No other thread will access this state. So no need to lock
      */
     public void addTableIndexes(OlapTable table) {
-        loadedTblIndexes.putAll(table.getAssociatedTableIdToIndexes());
+        for (Map.Entry<Long, List<Long>> entry : table.getAssociatedTableIdToIndexes().entrySet()) {
+            Set<Long> indexIds = loadedTblIndexes.computeIfAbsent(entry.getKey(), k -> Sets.newHashSet());
+            // always equal the index ids
+            indexIds.clear();
+            indexIds.addAll(entry.getValue());
+        }
     }
 
     public List<MaterializedIndex> getPartitionLoadedTblIndexes(long tableId, Partition partition) {
@@ -628,7 +633,12 @@ public class TransactionState implements Writable {
             loadedIndex = partition.getMaterializedIndices(MaterializedIndex.IndexExtState.ALL);
         } else {
             loadedIndex = Lists.newArrayList();
-            loadedIndex.addAll(loadedTblIndexes.get(tableId));
+            for (long indexId : loadedTblIndexes.get(tableId)) {
+                MaterializedIndex index = partition.getIndex(indexId);
+                if (index != null) {
+                    loadedIndex.add(index);
+                }
+            }
         }
         return loadedIndex;
     }
