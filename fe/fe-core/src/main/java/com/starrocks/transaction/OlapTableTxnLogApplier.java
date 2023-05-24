@@ -86,9 +86,6 @@ public class OlapTableTxnLogApplier implements TransactionLogApplier {
             List<MaterializedIndex> allIndices =
                     partition.getMaterializedIndices(MaterializedIndex.IndexExtState.ALL);
             for (MaterializedIndex index : allIndices) {
-                if (index.isLogicalIndex()) {
-                    continue;
-                }
                 for (Tablet tablet : index.getTablets()) {
                     for (Replica replica : ((LocalTablet) tablet).getImmutableReplicas()) {
                         if (txnState.isNewFinish()) {

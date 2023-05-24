@@ -224,7 +224,7 @@ public class Table extends MetaObject implements Writable, GsonPostProcessable {
         return id;
     }
 
-    public List<Long> getTrxTableIds() {
+    public List<Long> getAssociatedTableIds() {
         return Lists.newArrayList(id);
     }
 

@@ -156,6 +156,10 @@ public class MaterializedIndexMeta implements Writable, GsonPostProcessable {
         }
     }
 
+    public boolean isLogical() {
+        return metaIndexType == MetaIndexType.LOGICAL;
+    }
+
     // The column names of the materialized view are all lowercase, but the column names may be uppercase
     @VisibleForTesting
     public void setColumnsDefineExpr(Map<String, Expr> columnNameToDefineExpr) {

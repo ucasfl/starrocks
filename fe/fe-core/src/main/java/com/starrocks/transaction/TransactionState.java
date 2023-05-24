@@ -619,30 +619,7 @@ public class TransactionState implements Writable {
      * No other thread will access this state. So no need to lock
      */
     public void addTableIndexes(OlapTable table) {
-        Map<Long, List<MaterializedIndex>> tableIdToIndexes = Maps.newHashMap();
-        Long tableId = table.getId();
-
-        for (Partition partition : table.getPartitions()) {
-            for (MaterializedIndex index : partition.getMaterializedIndices(MaterializedIndex.IndexExtState.ALL)) {
-                if (index.getTargetTableId() == 0) {
-                    tableIdToIndexes.computeIfAbsent(tableId, x -> Lists.newArrayList())
-                            .add(index);
-                } else {
-                    tableIdToIndexes.computeIfAbsent(index.getTargetTableId(), x -> Lists.newArrayList())
-                            .add(index);
-                }
-            }
-        }
-        //        for (Map.Entry<Long, MaterializedIndexMeta> e : table.getIndexIdToMeta().entrySet()) {
-        //            if (e.getValue().getTargetTableId() == 0) {
-        //                tableIdToIndexes.computeIfAbsent(tableId, x -> Sets.newHashSet())
-        //                        .add(e.getKey());
-        //            } else {
-        //                tableIdToIndexes.computeIfAbsent(e.getValue().getTargetTableId(), x -> Sets.newHashSet())
-        //                        .add(e.getKey());
-        //            }
-        //        }
-        loadedTblIndexes.putAll(tableIdToIndexes);
+        loadedTblIndexes.putAll(table.getAssociatedTableIdToIndexes());
     }
 
     public List<MaterializedIndex> getPartitionLoadedTblIndexes(long tableId, Partition partition) {
@@ -652,12 +629,6 @@ public class TransactionState implements Writable {
         } else {
             loadedIndex = Lists.newArrayList();
             loadedIndex.addAll(loadedTblIndexes.get(tableId));
-            //            for (long indexId : loadedTblIndexes.get(tableId)) {
-            //                MaterializedIndex index = partition.getIndex(indexId);
-            //                if (index != null) {
-            //                    loadedIndex.add(index);
-            //                }
-            //            }
         }
         return loadedIndex;
     }

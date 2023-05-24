@@ -61,11 +61,15 @@ public class MaterializedIndex extends MetaObject implements Writable, GsonPostP
         ROLLUP,
         @Deprecated
         SCHEMA_CHANGE,
-        SHADOW,
-        LOGICAL; // index in SHADOW state is visible to load process, but invisible to query
+        SHADOW, // index in SHADOW state is visible to load process, but invisible to query
+        LOGICAL;
 
         public boolean isVisible() {
             return this == IndexState.NORMAL || this == IndexState.SCHEMA_CHANGE;
+        }
+
+        public boolean isLogical() {
+            return this == IndexState.LOGICAL;
         }
 
         public TIndexState toThrift() {
@@ -93,6 +97,7 @@ public class MaterializedIndex extends MetaObject implements Writable, GsonPostP
 
     public enum IndexExtState {
         ALL,
+        ALL_AND_LOGICAL,
         VISIBLE, // index state in NORMAL and SCHEMA_CHANGE
         SHADOW, // index state in SHADOW
         LOGICAL // `LOGICAL` means it's a reference to another Partition
@@ -208,10 +213,6 @@ public class MaterializedIndex extends MetaObject implements Writable, GsonPostP
         }
     }
 
-    public boolean isLogicalIndex() {
-        return targetTableId != 0;
-    }
-
     public long getTargetTableId() {
         return targetTableId;
     }
@@ -288,6 +289,10 @@ public class MaterializedIndex extends MetaObject implements Writable, GsonPostP
             idx++;
         }
         return -1;
+    }
+
+    public boolean isLogical() {
+        return state.isLogical();
     }
 
     @Override

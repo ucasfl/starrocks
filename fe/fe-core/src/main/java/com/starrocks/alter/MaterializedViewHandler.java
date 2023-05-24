@@ -306,7 +306,6 @@ public class MaterializedViewHandler extends AlterHandler {
             mvIndexMeta.setTargetTableId(targetTableId);
             mvIndexMeta.setMetaIndexType(MaterializedIndexMeta.MetaIndexType.LOGICAL);
             baseTable.rebuildFullSchema();
-
             baseTable.addColocateMaterializedView(stmt.getMVName());
         } finally {
             db.writeUnlock();

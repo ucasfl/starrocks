@@ -93,6 +93,9 @@ public class Partition extends MetaObject implements Writable {
     @SerializedName(value = "idToShadowIndex")
     private Map<Long, MaterializedIndex> idToShadowIndex = Maps.newHashMap();
 
+    @SerializedName(value = "idToLogicalIndex")
+    private Map<Long, MaterializedIndex> idToLogicalIndex = Maps.newHashMap();
+
     /**
      * committed version(hash): after txn is committed, set committed version(hash)
      * visible version(hash): after txn is published, set visible version
@@ -114,8 +117,6 @@ public class Partition extends MetaObject implements Writable {
 
     private Partition() {
     }
-
-
 
     public Partition(long id, String name,
                      MaterializedIndex baseIndex,
@@ -154,6 +155,7 @@ public class Partition extends MetaObject implements Writable {
         partition.nextVersion = this.nextVersion;
         partition.distributionInfo = this.distributionInfo;
         partition.shardGroupId = this.shardGroupId;
+        partition.idToLogicalIndex = Maps.newHashMap(this.idToLogicalIndex);
         return partition;
     }
 
@@ -231,6 +233,8 @@ public class Partition extends MetaObject implements Writable {
     public void createRollupIndex(MaterializedIndex mIndex) {
         if (mIndex.getState().isVisible()) {
             this.idToVisibleRollupIndex.put(mIndex.getId(), mIndex);
+        } else if (mIndex.getState().isLogical()) {
+            this.idToLogicalIndex.put(mIndex.getId(), mIndex);
         } else {
             this.idToShadowIndex.put(mIndex.getId(), mIndex);
         }
@@ -239,6 +243,8 @@ public class Partition extends MetaObject implements Writable {
     public MaterializedIndex deleteRollupIndex(long indexId) {
         if (this.idToVisibleRollupIndex.containsKey(indexId)) {
             return idToVisibleRollupIndex.remove(indexId);
+        } else if (idToLogicalIndex.containsKey(indexId)) {
+            return idToLogicalIndex.remove(indexId);
         } else {
             return idToShadowIndex.remove(indexId);
         }
@@ -270,6 +276,8 @@ public class Partition extends MetaObject implements Writable {
         }
         if (idToVisibleRollupIndex.containsKey(indexId)) {
             return idToVisibleRollupIndex.get(indexId);
+        } else if (idToLogicalIndex.containsKey(indexId)) {
+            return idToLogicalIndex.get(indexId);
         } else {
             return idToShadowIndex.get(indexId);
         }
@@ -283,10 +291,18 @@ public class Partition extends MetaObject implements Writable {
                 indices.addAll(idToVisibleRollupIndex.values());
                 indices.addAll(idToShadowIndex.values());
                 break;
+            case ALL_AND_LOGICAL:
+                indices.add(baseIndex);
+                indices.addAll(idToVisibleRollupIndex.values());
+                indices.addAll(idToShadowIndex.values());
+                indices.addAll(idToLogicalIndex.values());
+                break;
             case VISIBLE:
                 indices.add(baseIndex);
                 indices.addAll(idToVisibleRollupIndex.values());
                 break;
+            case LOGICAL:
+                indices.addAll(idToLogicalIndex.values());
             case SHADOW:
                 indices.addAll(idToShadowIndex.values());
             default:
@@ -299,10 +315,14 @@ public class Partition extends MetaObject implements Writable {
         switch (extState) {
             case ALL:
                 return 1 + idToVisibleRollupIndex.size() + idToShadowIndex.size();
+            case ALL_AND_LOGICAL:
+                return 1 + idToVisibleRollupIndex.size() + idToShadowIndex.size() + idToLogicalIndex.size();
             case VISIBLE:
                 return 1 + idToVisibleRollupIndex.size();
+            case LOGICAL:
+                return idToLogicalIndex.size();
             case SHADOW:
-                return idToVisibleRollupIndex.size();
+                return idToShadowIndex.size();
             default:
                 return 0;
         }
@@ -337,7 +357,7 @@ public class Partition extends MetaObject implements Writable {
     }
 
     public boolean hasMaterializedView() {
-        return !idToVisibleRollupIndex.isEmpty();
+        return !idToVisibleRollupIndex.isEmpty() || !idToLogicalIndex.isEmpty();
     }
 
     public boolean hasData() {
@@ -407,6 +427,14 @@ public class Partition extends MetaObject implements Writable {
 
         Text.writeString(out, distributionInfo.getType().name());
         distributionInfo.write(out);
+
+        int logicalRollupCount = (idToLogicalIndex != null) ? idToLogicalIndex.size() : 0;
+        out.writeInt(logicalRollupCount);
+        if (idToLogicalIndex != null) {
+            for (Map.Entry<Long, MaterializedIndex> entry : idToLogicalIndex.entrySet()) {
+                entry.getValue().write(out);
+            }
+        }
     }
 
     @Override
@@ -445,6 +473,12 @@ public class Partition extends MetaObject implements Writable {
         } else {
             throw new IOException("invalid distribution type: " + distriType);
         }
+
+        int logicalRollupCount = in.readInt();
+        for (int i = 0; i < logicalRollupCount; ++i) {
+            MaterializedIndex rollupTable = MaterializedIndex.read(in);
+            idToLogicalIndex.put(rollupTable.getId(), rollupTable);
+        }
     }
 
     @Override
@@ -462,24 +496,34 @@ public class Partition extends MetaObject implements Writable {
         }
 
         Partition partition = (Partition) obj;
-        if (idToVisibleRollupIndex != partition.idToVisibleRollupIndex) {
-            if (idToVisibleRollupIndex.size() != partition.idToVisibleRollupIndex.size()) {
-                return false;
-            }
-            for (Entry<Long, MaterializedIndex> entry : idToVisibleRollupIndex.entrySet()) {
-                long key = entry.getKey();
-                if (!partition.idToVisibleRollupIndex.containsKey(key)) {
-                    return false;
-                }
-                if (!entry.getValue().equals(partition.idToVisibleRollupIndex.get(key))) {
-                    return false;
-                }
-            }
+        if (idToVisibleRollupIndex != partition.idToVisibleRollupIndex &&
+                !equals(idToVisibleRollupIndex, partition.idToVisibleRollupIndex)) {
+            return false;
+        }
+        if (idToLogicalIndex != partition.idToLogicalIndex &&
+                !equals(idToLogicalIndex, partition.idToLogicalIndex)) {
+            return false;
         }
 
         return (visibleVersion == partition.visibleVersion)
                 && (baseIndex.equals(partition.baseIndex)
                 && distributionInfo.equals(partition.distributionInfo));
+    }
+
+    private boolean equals(Map<Long, MaterializedIndex> l1, Map<Long, MaterializedIndex> l2) {
+        if (l1.size() != l2.size()) {
+            return false;
+        }
+        for (Entry<Long, MaterializedIndex> entry : l1.entrySet()) {
+            long key = entry.getKey();
+            if (!l2.containsKey(key)) {
+                return false;
+            }
+            if (!entry.getValue().equals(l2.get(key))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
@@ -493,10 +537,16 @@ public class Partition extends MetaObject implements Writable {
 
         int rollupCount = (idToVisibleRollupIndex != null) ? idToVisibleRollupIndex.size() : 0;
         buffer.append("rollup count: ").append(rollupCount).append("; ");
-
         if (idToVisibleRollupIndex != null) {
             for (Map.Entry<Long, MaterializedIndex> entry : idToVisibleRollupIndex.entrySet()) {
                 buffer.append("rollup_index: ").append(entry.getValue().toString()).append("; ");
+            }
+        }
+        int logicalRollupCount = (idToLogicalIndex != null) ? idToLogicalIndex.size() : 0;
+        buffer.append("logical rollup count: ").append(logicalRollupCount).append("; ");
+        if (idToLogicalIndex != null) {
+            for (Map.Entry<Long, MaterializedIndex> entry : idToLogicalIndex.entrySet()) {
+                buffer.append("logical rollup_index: ").append(entry.getValue().toString()).append("; ");
             }
         }
 

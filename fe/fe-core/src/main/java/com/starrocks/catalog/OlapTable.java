@@ -1376,17 +1376,29 @@ public class OlapTable extends Table {
     }
 
     @Override
-    public List<Long> getTrxTableIds() {
-        List<Long> trxTableIds = Lists.newArrayList(id);
-        for (MaterializedIndexMeta indexMeta : indexIdToMeta.values()) {
-            if (indexMeta.getTargetTableId() != 0 && indexMeta.getTargetTableId() != id) {
-                trxTableIds.add(indexMeta.getTargetTableId());
-            }
-        }
-        return trxTableIds;
+    public List<Long> getAssociatedTableIds() {
+        List<Long> associatedTableIds = Lists.newArrayList(id);
+        indexIdToMeta.values().stream().filter(MaterializedIndexMeta::isLogical)
+                .forEach(m -> associatedTableIds.add(m.getTargetTableId()));
+        return associatedTableIds;
     }
 
-    public boolean containLogicalMaterializedViews() {
+    // Return associated table_id to partition indexes mapping.
+    public Map<Long, List<MaterializedIndex>> getAssociatedTableIdToIndexes() {
+        Map<Long, List<MaterializedIndex>> tableIdToIndexes = Maps.newHashMap();
+        for (Partition partition : getPartitions()) {
+            for (MaterializedIndex index : partition.getMaterializedIndices(IndexExtState.ALL_AND_LOGICAL)) {
+                if (index.isLogical()) {
+                    tableIdToIndexes.computeIfAbsent(index.getTargetTableId(), x -> Lists.newArrayList()).add(index);
+                } else {
+                    tableIdToIndexes.computeIfAbsent(id, x -> Lists.newArrayList()).add(index);
+                }
+            }
+        }
+        return tableIdToIndexes;
+    }
+
+    public boolean hasAssociatedTables() {
         return indexIdToMeta.values().stream()
                 .anyMatch(x -> x.getMetaIndexType() == MaterializedIndexMeta.MetaIndexType.LOGICAL);
     }
