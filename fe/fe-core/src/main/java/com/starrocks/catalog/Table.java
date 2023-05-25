@@ -344,6 +344,10 @@ public class Table extends MetaObject implements Writable, GsonPostProcessable {
         return fullSchema;
     }
 
+    public List<Column> getMVSchema() {
+        return Lists.newArrayList();
+    }
+
     public void setNewFullSchema(List<Column> newSchema) {
         this.fullSchema = newSchema;
         this.nameToColumn.clear();

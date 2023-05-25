@@ -128,8 +128,7 @@ public class MVColumnItem {
         Column baseColumn = olapTable.getBaseColumn(name);
         Column result;
         if (baseColumn == null) {
-            result = new Column(name, type, isKey, aggregationType, isAllowNull,
-                    ColumnDef.DefaultValueDef.EMPTY_VALUE, "");
+            result = new Column(name, type, isKey, aggregationType, isAllowNull, null, "");
             if (defineExpr != null) {
                 result.setDefineExpr(defineExpr);
             }

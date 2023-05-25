@@ -1827,6 +1827,17 @@ public class OlapTable extends Table {
         return getSchemaByIndexId(baseIndexId);
     }
 
+    @Override
+    public List<Column> getMVSchema() {
+        List<Column> mvSchema = Lists.newArrayList();
+        for (Map.Entry<Long, MaterializedIndexMeta> entry : indexIdToMeta.entrySet()) {
+            if (entry.getKey() != baseIndexId) {
+                mvSchema.addAll(entry.getValue().getSchema());
+            }
+        }
+        return mvSchema;
+    }
+
     public List<Column> getBaseSchemaWithoutMaterializedColumn() {
         if (!hasMaterializedColumn()) {
             return getSchemaByIndexId(baseIndexId);

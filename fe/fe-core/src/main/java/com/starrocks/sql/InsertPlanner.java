@@ -460,8 +460,9 @@ public class InsertPlanner {
 
             // Target column which starts with "mv" should not be treated as materialized view column when this column exists in base schema,
             // this could be created by user.
-            if (targetColumn.isNameWithPrefix(MATERIALIZED_VIEW_NAME_PREFIX) &&
-                    !baseSchema.contains(targetColumn)) {
+            if ((targetColumn.isNameWithPrefix(MATERIALIZED_VIEW_NAME_PREFIX)
+                    || insertStatement.getTargetTable().getMVSchema().contains(targetColumn))
+                    && !baseSchema.contains(targetColumn)) {
                 String originName = targetColumn.getRefColumn().getColumnName();
                 Optional<Column> optOriginColumn = fullSchema.stream()
                         .filter(c -> c.nameEquals(originName, false)).findFirst();

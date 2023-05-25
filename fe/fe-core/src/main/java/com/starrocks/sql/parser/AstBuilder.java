@@ -1489,7 +1489,10 @@ public class AstBuilder extends StarRocksBaseVisitor<ParseNode> {
         boolean ifNotExist = context.IF() != null;
         QualifiedName qualifiedName = getQualifiedName(context.mvName);
         TableName tableName = qualifiedNameToTableName(qualifiedName);
-        TableName targetTableName = qualifiedNameToTableName(getQualifiedName(context.targetTable));
+        TableName targetTableName = null;
+        if (context.targetTable != null) {
+            targetTableName = qualifiedNameToTableName(getQualifiedName(context.targetTable));
+        }
 
         List<ColWithComment> colWithComments = null;
         if (!context.columnNameWithComment().isEmpty()) {

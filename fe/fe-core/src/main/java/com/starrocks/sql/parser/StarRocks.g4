@@ -562,7 +562,7 @@ createMaterializedViewStatement
     ('(' columnNameWithComment (',' columnNameWithComment)* ')')?
     comment?
     materializedViewDesc*
-    (TO targetTable=qualifiedName)
+    (TO targetTable=qualifiedName)?
     AS queryStatement
     ;
 
