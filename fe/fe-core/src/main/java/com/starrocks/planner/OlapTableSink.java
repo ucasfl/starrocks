@@ -455,7 +455,7 @@ public class OlapTableSink extends DataSink {
             tPartition.setNum_buckets(index.getTablets().size());
             long targetPartitionId = index.getTargetPartitionId() != 0 ? index.getTargetPartitionId() : partition.getId();
             if (hasAssociatedTables) {
-                tPartition.addToAssociated_partition_ids(targetPartitionId);
+                tPartition.putToAssociated_partition_ids(index.getId(), targetPartitionId);
             }
         }
     }

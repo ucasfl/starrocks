@@ -276,7 +276,7 @@ Status OlapTableSink::_init_node_channels(RuntimeState* state) {
             for (auto tablet : part->indexes[i].tablets) {
                 PTabletWithPartition tablet_info;
                 tablet_info.set_tablet_id(tablet);
-                tablet_info.set_partition_id(part->partition_id(i));
+                tablet_info.set_partition_id(part->partition_id_of_index(index->index_id));
 
                 // setup replicas
                 auto* location = _location->find_tablet(tablet);

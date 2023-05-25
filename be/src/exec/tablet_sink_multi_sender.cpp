@@ -85,7 +85,8 @@ Status TabletSinkMultiSender::send_chunk(std::shared_ptr<OlapTableSchemaParam> s
             auto* index = schema->indexes()[i];
             for (size_t j = 0; j < selection_size; ++j) {
                 uint16_t selection = validate_select_idx[j];
-                index_id_partition_id[index->index_id].emplace(partitions[selection]->associated_partition_ids[i]);
+                index_id_partition_id[index->index_id].emplace(
+                        partitions[selection]->associated_partition_ids[index->index_id]);
                 _tablet_ids[selection] = partitions[selection]->indexes[i].tablets[tablet_indexes[selection]];
             }
             RETURN_IF_ERROR(_send_chunk_by_node(chunk, _channels[i], validate_select_idx));
@@ -95,7 +96,8 @@ Status TabletSinkMultiSender::send_chunk(std::shared_ptr<OlapTableSchemaParam> s
         for (size_t i = 0; i < index_size; ++i) {
             auto* index = schema->indexes()[i];
             for (size_t j = 0; j < num_rows; ++j) {
-                index_id_partition_id[index->index_id].emplace(partitions[j]->associated_partition_ids[i]);
+                index_id_partition_id[index->index_id].emplace(
+                        partitions[j]->associated_partition_ids[index->index_id]);
                 _tablet_ids[j] = partitions[j]->indexes[i].tablets[tablet_indexes[j]];
             }
             RETURN_IF_ERROR(_send_chunk_by_node(chunk, _channels[i], validate_select_idx));

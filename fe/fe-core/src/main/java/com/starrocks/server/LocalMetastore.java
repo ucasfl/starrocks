@@ -2117,9 +2117,6 @@ public class LocalMetastore implements ConnectorMetadata {
                                    Set<Long> tabletIdSet)
             throws DdlException {
         Preconditions.checkArgument(table.isCloudNativeTableOrMaterializedView());
-        if (index.isLogical()) {
-            return;
-        }
 
         DistributionInfo.DistributionInfoType distributionInfoType = distributionInfo.getType();
         if (distributionInfoType != DistributionInfo.DistributionInfoType.HASH) {
@@ -2144,9 +2141,6 @@ public class LocalMetastore implements ConnectorMetadata {
                                    DistributionInfo distributionInfo, long version, short replicationNum,
                                    TabletMeta tabletMeta, Set<Long> tabletIdSet) throws DdlException {
         Preconditions.checkArgument(replicationNum > 0);
-        if (index.isLogical()) {
-            return;
-        }
 
         DistributionInfo.DistributionInfoType distributionInfoType = distributionInfo.getType();
         if (distributionInfoType != DistributionInfo.DistributionInfoType.HASH

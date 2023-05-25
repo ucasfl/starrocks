@@ -225,7 +225,7 @@ struct TOlapTablePartition {
     9: optional bool is_shadow_partition = false
     
     // associated_partition_ids
-    10: optional list<i64> associated_partition_ids
+    10: optional map<i64, i64> associated_partition_ids
 }
 
 struct TOlapTablePartitionParam {

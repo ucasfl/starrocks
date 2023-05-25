@@ -167,10 +167,10 @@ struct OlapTablePartition {
     std::vector<ChunkRow> in_keys;
     int64_t num_buckets = 0;
     std::vector<OlapTableIndexTablets> indexes;
-    std::vector<int64_t> associated_partition_ids;
-    int64_t partition_id(int32_t idx) {
+    std::unordered_map<int64_t, int64_t> associated_partition_ids;
+    int64_t partition_id_of_index(int32_t index_id) {
         if (associated_partition_ids.size() > 0) {
-            return associated_partition_ids[idx];
+            return associated_partition_ids[index_id];
         } else {
             return id;
         }
