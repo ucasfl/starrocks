@@ -196,6 +196,11 @@ public class MaterializedViewRule extends Rule {
             Map.Entry<Long, MaterializedIndexMeta> entry = iterator.next();
             Long mvIdx = entry.getKey();
             MaterializedIndexMeta mvMeta = entry.getValue();
+            // Ignore logical materialized view.
+            if (entry.getValue().isLogical()) {
+                iterator.remove();
+                continue;
+            }
 
             // Ignore original query index.
             if (mvIdx == scanOperator.getSelectedIndexId()) {

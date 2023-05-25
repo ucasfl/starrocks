@@ -334,6 +334,7 @@ public class MaterializedViewHandler extends AlterHandler {
             MaterializedIndexMeta mvIndexMeta = baseTable.getIndexMetaByIndexId(mvIndexId);
             Preconditions.checkState(mvIndexMeta != null);
             mvIndexMeta.setTargetTableId(targetTableId);
+            mvIndexMeta.setTargetTableIndexId(targetOlapTable.getBaseIndexId());
             mvIndexMeta.setMetaIndexType(MaterializedIndexMeta.MetaIndexType.LOGICAL);
             baseTable.rebuildFullSchema();
         } finally {

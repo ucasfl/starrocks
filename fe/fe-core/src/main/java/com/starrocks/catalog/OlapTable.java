@@ -1383,14 +1383,15 @@ public class OlapTable extends Table {
         return associatedTableIds;
     }
 
-    // Return associated table_id to indexe ids mapping.
+    // Return associated table_id to index ids mapping.
     public Map<Long, List<Long>> getAssociatedTableIdToIndexes() {
         Map<Long, List<Long>> tableIdToIndexes = Maps.newHashMap();
         for (Map.Entry<Long, MaterializedIndexMeta> entry : indexIdToMeta.entrySet()) {
             Long indexId = entry.getKey();
             MaterializedIndexMeta indexMeta = entry.getValue();
             if (indexMeta.isLogical()) {
-                tableIdToIndexes.computeIfAbsent(indexMeta.getTargetTableId(), x -> Lists.newArrayList()).add(indexId);
+                tableIdToIndexes.computeIfAbsent(indexMeta.getTargetTableId(), x -> Lists.newArrayList())
+                        .add(indexMeta.getTargetTableIndexId());
             } else {
                 tableIdToIndexes.computeIfAbsent(id, x -> Lists.newArrayList()).add(indexId);
             }
