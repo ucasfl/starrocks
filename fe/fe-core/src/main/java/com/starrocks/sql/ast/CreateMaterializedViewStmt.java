@@ -41,7 +41,6 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.starrocks.analysis.CaseExpr;
 import com.starrocks.analysis.CaseWhenClause;
-import com.starrocks.analysis.CastExpr;
 import com.starrocks.analysis.Expr;
 import com.starrocks.analysis.FunctionCallExpr;
 import com.starrocks.analysis.IntLiteral;
@@ -456,7 +455,8 @@ public class CreateMaterializedViewStmt extends DdlStmt {
                 List<String> baseColumnNames = slots.stream().map(slot -> slot.getColumnName().toLowerCase()).
                         collect(Collectors.toList());
 
-                String columnName = alias != null ? alias : MVUtils.getMVColumnName(selectListItemExpr.debugString(), baseColumnNames);
+                String columnName = alias != null ? alias : MVUtils.getMVColumnName(selectListItemExpr.debugString(),
+                        baseColumnNames);
                 MVColumnItem mvColumnItem = new MVColumnItem(columnName, type, selectListItemExpr, baseColumnNames);
 
                 if (!mvColumnNameSet.add(columnName)) {
