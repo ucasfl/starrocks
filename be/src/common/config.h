@@ -957,6 +957,8 @@ CONF_mBool(enable_auto_evict_update_cache, "true");
 
 CONF_mInt64(load_tablet_timeout_seconds, "30");
 
+CONF_mBool(random_distribution_select_one_bucket_each_load, "false");
+
 CONF_mBool(enable_pk_value_column_zonemap, "true");
 
 } // namespace starrocks::config

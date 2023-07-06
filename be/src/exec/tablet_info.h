@@ -259,6 +259,8 @@ private:
     std::map<int64_t, OlapTablePartition*> _partitions;
     std::map<ChunkRow*, OlapTablePartition*, PartionKeyComparator> _partitions_map;
 
+    uint32_t _random_bucket_id = 0;
+
     Random _rand{(uint32_t)time(nullptr)};
 };
 

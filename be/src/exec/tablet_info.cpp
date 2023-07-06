@@ -167,6 +167,11 @@ Status OlapTablePartitionParam::init(RuntimeState* state) {
     }
     _distributed_columns.resize(_distributed_slot_descs.size());
 
+    if (_distributed_slot_descs.empty() && starrocks::config::random_distribution_select_one_bucket_each_load) {
+        srand(time(NULL));
+        _random_bucket_id = rand();
+    }
+
     if (_t_param.__isset.partition_exprs && _t_param.partition_exprs.size() > 0) {
         if (state == nullptr) {
             return Status::InternalError("state is null when partition_exprs is not empty");
@@ -502,9 +507,13 @@ void OlapTablePartitionParam::_compute_hashes(Chunk* chunk, std::vector<uint32_t
 
     // if no distributed columns, use random distribution
     if (_distributed_slot_descs.size() == 0) {
-        uint32_t r = _rand.Next();
-        for (auto i = 0; i < num_rows; ++i) {
-            (*indexes)[i] = r++;
+        if (starrocks::config::random_distribution_select_one_bucket_each_load) {
+            for (auto i = 0; i < num_rows; ++i) (*indexes)[i] = _random_bucket_id;
+        } else {
+            uint32_t r = _rand.Next();
+            for (auto i = 0; i < num_rows; ++i) {
+                (*indexes)[i] = r++;
+            }
         }
     }
 }
